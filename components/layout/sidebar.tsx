@@ -37,6 +37,7 @@ const navItems = {
     { title: "Judges", href: "/admin/judges", icon: Gavel },
     { title: "Evaluations", href: "/admin/evaluations", icon: ClipboardList },
     { title: "Contestants", href: "/admin/contestants", icon: Users },
+    { title: "Results", href: "/admin/results", icon: Award },
     { title: "Analytics", href: "/admin/analytics", icon: BarChart3 },
     { title: "Reports", href: "/admin/reports", icon: FileText },
     { title: "Bulk Upload", href: "/admin/bulk-upload", icon: Upload },
@@ -45,8 +46,8 @@ const navItems = {
     { title: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
     { title: "My Events", href: "/judge/events", icon: Calendar },
     { title: "Judging", href: "/judge/judging", icon: UserCheck },
-    { title: "Summarization", href: "/judge/summarization", icon: UserCheck },
-    { title: "My Reports", href: "/judge/reports", icon: FileText },
+    { title: "Summarization", href: "/judge/summarization", icon: FileText },
+    // { title: "My Reports", href: "/judge/reports", icon: FileText },
   ],
   contestant: [
     { title: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
