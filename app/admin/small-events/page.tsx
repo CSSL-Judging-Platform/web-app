@@ -1,12 +1,20 @@
 "use client"
 
-import type React from "react"
-
 import { useState, useEffect } from "react"
-import { Plus, Edit, Trash2, Users, Trophy, Settings, UserCheck } from "lucide-react"
+import { Plus, Search, Filter, MoreHorizontal, Users, Calendar, Trophy, Edit, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   Dialog,
   DialogContent,
@@ -16,71 +24,53 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { DashboardLayout } from "@/components/layout/sidebar"
-import { getCurrentUser } from "@/lib/auth"
-import { mockData, mockApi } from "@/lib/mock-data"
+import { useAuth } from "@/lib/auth"
+import { competitionsApi, bigEventsApi } from "@/lib/api"
+import { useToast } from "@/hooks/use-toast"
 
 interface Competition {
   id: string
   name: string
-  description: string | null
+  description: string
+  status: "draft" | "active" | "completed"
   start_date: string
   end_date: string
-  status: "draft" | "active" | "completed" | "cancelled"
-  big_event_name: string
-  contestants_count: number
-  judges_count: number
-  criteria_count: number
+  max_participants: number
+  big_event_id: string
+  big_events?: { name: string }
+  contestants?: { count: number }[]
+  judge_assignments?: { count: number }[]
 }
 
-interface JudgingCriteria {
+interface BigEvent {
   id: string
   name: string
-  description: string
-  max_points: number
-  weight: number
-  order_index: number
 }
 
-export default function CompetitionsPage() {
-  const [user, setUser] = useState<any>(null)
+export default function SmallEventsPage() {
+  const { user } = useAuth()
   const [competitions, setCompetitions] = useState<Competition[]>([])
-  const [bigEvents, setBigEvents] = useState<any[]>([])
+  const [bigEvents, setBigEvents] = useState<BigEvent[]>([])
   const [loading, setLoading] = useState(true)
-  const [dialogOpen, setDialogOpen] = useState(false)
-  const [criteriaDialogOpen, setCriteriaDialogOpen] = useState(false)
-  const [judgesDialogOpen, setJudgesDialogOpen] = useState(false)
-  const [contestantsDialogOpen, setContestantsDialogOpen] = useState(false)
-  const [editingCompetition, setEditingCompetition] = useState<Competition | null>(null)
-  const [selectedCompetitionId, setSelectedCompetitionId] = useState<string>("")
-  const [criteria, setCriteria] = useState<JudgingCriteria[]>([])
-  const [availableJudges, setAvailableJudges] = useState<any[]>([])
-  const [assignedJudges, setAssignedJudges] = useState<any[]>([])
-  const [availableContestants, setAvailableContestants] = useState<any[]>([])
-  const [assignedContestants, setAssignedContestants] = useState<any[]>([])
-
+  const [searchTerm, setSearchTerm] = useState("")
+  const [statusFilter, setStatusFilter] = useState<string>("all")
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
+  const [selectedCompetition, setSelectedCompetition] = useState<Competition | null>(null)
   const [formData, setFormData] = useState({
     name: "",
     description: "",
-    big_event_id: "",
+    max_participants: "",
     start_date: "",
     end_date: "",
-    status: "draft" as const,
-    allow_registration: true,
+    big_event_id: "",
   })
-
-  const [newCriteria, setNewCriteria] = useState({
-    name: "",
-    description: "",
-    max_points: 100,
-    weight: 1.0,
-  })
+  const { toast } = useToast()
+  const [updatingStatus, setUpdatingStatus] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     loadData()
@@ -88,44 +78,102 @@ export default function CompetitionsPage() {
 
   const loadData = async () => {
     try {
-      const currentUser = await getCurrentUser()
-      setUser(currentUser)
+      const [competitionsData, bigEventsData] = await Promise.all([competitionsApi.getAll(), bigEventsApi.getAll()])
 
-      // Load mock data
-      setBigEvents(mockData.bigEvents)
-      setCompetitions(mockData.competitions)
-      setAvailableJudges(mockData.judges)
+      setCompetitions(competitionsData)
+      setBigEvents(bigEventsData)
     } catch (error) {
       console.error("Error loading data:", error)
+      toast({
+        title: "Error",
+        description: "Failed to load competitions data.",
+        variant: "destructive",
+      })
     } finally {
       setLoading(false)
     }
   }
 
-  const loadCriteria = async (competitionId: string) => {
-    const competitionCriteria = mockData.judgingCriteria[competitionId] || []
-    setCriteria(competitionCriteria)
-  }
+  const filteredCompetitions = competitions.filter((competition) => {
+    const matchesSearch =
+      competition.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      competition.description.toLowerCase().includes(searchTerm.toLowerCase())
+    const matchesStatus = statusFilter === "all" || competition.status === statusFilter
+    return matchesSearch && matchesStatus
+  })
 
-  const loadJudges = async (competitionId: string) => {
-    const assignments = mockData.judgeAssignments.filter((a) => a.competition_id === competitionId)
-    const assigned = mockData.judges.filter((j) => assignments.some((a) => a.judge_id === j.id))
-    setAssignedJudges(assigned)
-  }
-
-  const loadContestants = async (competitionId: string) => {
-    const assigned = mockData.contestants.filter((c) => c.competition_id === competitionId)
-    setAssignedContestants(assigned)
-  }
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleCreateCompetition = async () => {
     try {
-      await mockApi.post("/competitions", formData)
+      await competitionsApi.create({
+        ...formData,
+        max_participants: Number.parseInt(formData.max_participants),
+        created_by: user?.id || "",
+      })
+
+      await loadData()
+      setIsCreateDialogOpen(false)
       resetForm()
-      loadData()
+
+      toast({
+        title: "Success",
+        description: "Competition created successfully.",
+      })
     } catch (error) {
-      console.error("Error saving competition:", error)
+      console.error("Error creating competition:", error)
+      toast({
+        title: "Error",
+        description: "Failed to create competition.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleEditCompetition = async () => {
+    if (!selectedCompetition) return
+
+    try {
+      await competitionsApi.update(selectedCompetition.id, {
+        ...formData,
+        max_participants: Number.parseInt(formData.max_participants),
+      })
+
+      await loadData()
+      setIsEditDialogOpen(false)
+      setSelectedCompetition(null)
+      resetForm()
+
+      toast({
+        title: "Success",
+        description: "Competition updated successfully.",
+      })
+    } catch (error) {
+      console.error("Error updating competition:", error)
+      toast({
+        title: "Error",
+        description: "Failed to update competition.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleDeleteCompetition = async (competitionId: string) => {
+    if (confirm("Are you sure you want to delete this competition?")) {
+      try {
+        await competitionsApi.delete(competitionId)
+        await loadData()
+
+        toast({
+          title: "Success",
+          description: "Competition deleted successfully.",
+        })
+      } catch (error) {
+        console.error("Error deleting competition:", error)
+        toast({
+          title: "Error",
+          description: "Failed to delete competition.",
+          variant: "destructive",
+        })
+      }
     }
   }
 
@@ -133,456 +181,454 @@ export default function CompetitionsPage() {
     setFormData({
       name: "",
       description: "",
-      big_event_id: "",
+      max_participants: "",
       start_date: "",
       end_date: "",
-      status: "draft",
-      allow_registration: true,
+      big_event_id: "",
     })
-    setEditingCompetition(null)
-    setDialogOpen(false)
   }
 
-  const handleEdit = (competition: Competition) => {
-    setEditingCompetition(competition)
+  const openEditDialog = (competition: Competition) => {
+    setSelectedCompetition(competition)
     setFormData({
       name: competition.name,
-      description: competition.description || "",
-      big_event_id: "1", // Mock
-      start_date: competition.start_date,
-      end_date: competition.end_date,
-      status: competition.status,
-      allow_registration: true,
+      description: competition.description,
+      max_participants: competition.max_participants.toString(),
+      start_date: formatDateForInput(competition.start_date),
+      end_date: formatDateForInput(competition.end_date),
+      big_event_id: competition.big_event_id,
     })
-    setDialogOpen(true)
+    setIsEditDialogOpen(true)
   }
 
-  const handleDelete = async (competitionId: string) => {
-    if (confirm("Are you sure you want to delete this competition?")) {
-      try {
-        await mockApi.delete(`/competitions/${competitionId}`)
-        loadData()
-      } catch (error) {
-        console.error("Error deleting competition:", error)
-      }
-    }
+  const handleStatusUpdate = async (competitionId: string, newStatus: "draft" | "active" | "completed") => {
+  setUpdatingStatus(prev => ({ ...prev, [competitionId]: true }));
+  
+  try {
+    await competitionsApi.updateStatus(competitionId, newStatus);
+    await loadData();
+    toast({
+      title: "Success",
+      description: "Competition status updated successfully.",
+    });
+  } catch (error) {
+    console.error("Error updating status:", error);
+    toast({
+      title: "Error",
+      description: "Failed to update competition status.",
+      variant: "destructive",
+    });
+  } finally {
+    setUpdatingStatus(prev => ({ ...prev, [competitionId]: false }));
   }
+};
 
-  const handleManageCriteria = (competitionId: string) => {
-    setSelectedCompetitionId(competitionId)
-    loadCriteria(competitionId)
-    setCriteriaDialogOpen(true)
-  }
+  // const getStatusBadge = (status: string) => {
+  //   switch (status) {
+  //     case "active":
+  //       return <Badge className="bg-green-100 text-green-800">Active</Badge>
+  //     case "completed":
+  //       return <Badge className="bg-gray-100 text-gray-800">Completed</Badge>
+  //     default:
+  //       return <Badge className="bg-yellow-100 text-yellow-800">Draft</Badge>
+  //   }
+  // }
 
-  const handleManageJudges = (competitionId: string) => {
-    setSelectedCompetitionId(competitionId)
-    loadJudges(competitionId)
-    setJudgesDialogOpen(true)
-  }
-
-  const handleManageContestants = (competitionId: string) => {
-    setSelectedCompetitionId(competitionId)
-    loadContestants(competitionId)
-    setContestantsDialogOpen(true)
-  }
-
-  const addCriteria = () => {
-    const newCriteriaItem: JudgingCriteria = {
-      id: Date.now().toString(),
-      ...newCriteria,
-      order_index: criteria.length + 1,
-    }
-    setCriteria([...criteria, newCriteriaItem])
-    setNewCriteria({
-      name: "",
-      description: "",
-      max_points: 100,
-      weight: 1.0,
-    })
-  }
-
-  const removeCriteria = (id: string) => {
-    setCriteria(criteria.filter((c) => c.id !== id))
-  }
-
-  const toggleJudgeAssignment = (judgeId: string) => {
-    const isAssigned = assignedJudges.some((j) => j.id === judgeId)
-    if (isAssigned) {
-      setAssignedJudges(assignedJudges.filter((j) => j.id !== judgeId))
-    } else {
-      const judge = availableJudges.find((j) => j.id === judgeId)
-      if (judge) {
-        setAssignedJudges([...assignedJudges, judge])
-      }
-    }
-  }
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "active":
-        return "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300"
-      case "completed":
-        return "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300"
-      case "cancelled":
-        return "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300"
-      default:
-        return "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300"
-    }
-  }
+  const getStatusBadge = (competition: Competition) => {
+  const status = competition.status;
+  const isLoading = updatingStatus[competition.id];
+  
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" className="h-8 p-0" disabled={isLoading}>
+          {isLoading ? (
+            <div className="flex items-center gap-2">
+              <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-primary"></div>
+              <span>Updating...</span>
+            </div>
+          ) : (
+            <>
+              {status === "active" && (
+                <Badge className="bg-green-100 text-green-800 hover:bg-green-200 cursor-pointer">
+                  Active
+                </Badge>
+              )}
+              {status === "completed" && (
+                <Badge className="bg-gray-100 text-gray-800 hover:bg-gray-200 cursor-pointer">
+                  Completed
+                </Badge>
+              )}
+              {status === "draft" && (
+                <Badge className="bg-yellow-100 text-yellow-800 hover:bg-yellow-200 cursor-pointer">
+                  Draft
+                </Badge>
+              )}
+            </>
+          )}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-40">
+        <DropdownMenuLabel>Change Status</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem 
+          onClick={() => handleStatusUpdate(competition.id, "draft")}
+          disabled={status === "draft"}
+        >
+          <div className={`w-2 h-2 rounded-full mr-2 ${status === "draft" ? 'bg-yellow-500' : 'bg-gray-200'}`} />
+          Draft
+        </DropdownMenuItem>
+        <DropdownMenuItem 
+          onClick={() => handleStatusUpdate(competition.id, "active")}
+          disabled={status === "active"}
+        >
+          <div className={`w-2 h-2 rounded-full mr-2 ${status === "active" ? 'bg-green-500' : 'bg-gray-200'}`} />
+          Active
+        </DropdownMenuItem>
+        <DropdownMenuItem 
+          onClick={() => handleStatusUpdate(competition.id, "completed")}
+          disabled={status === "completed"}
+        >
+          <div className={`w-2 h-2 rounded-full mr-2 ${status === "completed" ? 'bg-gray-500' : 'bg-gray-200'}`} />
+          Completed
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+};
 
   if (loading) {
     return (
       <DashboardLayout userRole="admin" user={user}>
-        <div className="flex items-center justify-center min-h-[400px]">
+        <div className="flex items-center justify-center h-64">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
         </div>
       </DashboardLayout>
     )
   }
 
+  const formatDateForInput = (dateString: string) => {
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    return date.toISOString().split('T')[0];
+  };
+
   return (
     <DashboardLayout userRole="admin" user={user}>
       <div className="space-y-6">
-        <div className="flex flex-col space-y-4 md:flex-row md:items-center md:justify-between md:space-y-0">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
-            <h2 className="text-2xl md:text-3xl font-bold tracking-tight">Competitions</h2>
-            <p className="text-muted-foreground">Manage competitions and their judging criteria</p>
+            <h1 className="text-3xl font-bold tracking-tight">Competitions</h1>
+            <p className="text-muted-foreground">Manage and organize competitions</p>
           </div>
-
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
             <DialogTrigger asChild>
-              <Button onClick={() => setEditingCompetition(null)} className="w-full md:w-auto">
+              <Button>
                 <Plus className="mr-2 h-4 w-4" />
                 Create Competition
               </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-[500px] mx-4 max-h-[90vh] overflow-y-auto">
+            <DialogContent className="sm:max-w-[425px]">
               <DialogHeader>
-                <DialogTitle>{editingCompetition ? "Edit Competition" : "Create New Competition"}</DialogTitle>
+                <DialogTitle>Create New Competition</DialogTitle>
                 <DialogDescription>
-                  {editingCompetition
-                    ? "Update the competition details below."
-                    : "Fill in the details to create a new competition."}
+                  Add a new competition to the system. Fill in all the required details.
                 </DialogDescription>
               </DialogHeader>
-              <form onSubmit={handleSubmit}>
-                <div className="grid gap-4 py-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="name">Competition Name</Label>
+              <div className="grid gap-4 py-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="name">Competition Name</Label>
+                  <Input
+                    id="name"
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    placeholder="Enter competition name"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="description">Description</Label>
+                  <Textarea
+                    id="description"
+                    value={formData.description}
+                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                    placeholder="Enter competition description"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="big_event_id">Big Event</Label>
+                  <Select
+                    value={formData.big_event_id}
+                    onValueChange={(value) => setFormData({ ...formData, big_event_id: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select big event" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {bigEvents.map((event) => (
+                        <SelectItem key={event.id} value={event.id}>
+                          {event.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="maxParticipants">Max Participants</Label>
+                  <Input
+                    id="maxParticipants"
+                    type="number"
+                    value={formData.max_participants}
+                    onChange={(e) => setFormData({ ...formData, max_participants: e.target.value })}
+                    placeholder="Enter max participants"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="startDate">Start Date</Label>
                     <Input
-                      id="name"
-                      value={formData.name}
-                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      required
+                      id="startDate"
+                      type="date"
+                      value={formData.start_date}
+                      onChange={(e) => setFormData({ ...formData, start_date: e.target.value })}
                     />
                   </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="big_event_id">Parent Event</Label>
-                    <Select
-                      value={formData.big_event_id}
-                      onValueChange={(value) => setFormData({ ...formData, big_event_id: value })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select parent event" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {bigEvents.map((event) => (
-                          <SelectItem key={event.id} value={event.id}>
-                            {event.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="description">Description</Label>
-                    <Textarea
-                      id="description"
-                      value={formData.description}
-                      onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                      rows={3}
+                  <div className="grid gap-2">
+                    <Label htmlFor="endDate">End Date</Label>
+                    <Input
+                      id="endDate"
+                      type="date"
+                      value={formData.end_date}
+                      onChange={(e) => setFormData({ ...formData, end_date: e.target.value })}
                     />
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="start_date">Start Date</Label>
-                      <Input
-                        id="start_date"
-                        type="date"
-                        value={formData.start_date}
-                        onChange={(e) => setFormData({ ...formData, start_date: e.target.value })}
-                        required
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="end_date">End Date</Label>
-                      <Input
-                        id="end_date"
-                        type="date"
-                        value={formData.end_date}
-                        onChange={(e) => setFormData({ ...formData, end_date: e.target.value })}
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="status">Status</Label>
-                    <Select
-                      value={formData.status}
-                      onValueChange={(value: any) => setFormData({ ...formData, status: value })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="draft">Draft</SelectItem>
-                        <SelectItem value="active">Active</SelectItem>
-                        <SelectItem value="completed">Completed</SelectItem>
-                        <SelectItem value="cancelled">Cancelled</SelectItem>
-                      </SelectContent>
-                    </Select>
                   </div>
                 </div>
-                <DialogFooter className="flex-col space-y-2 md:flex-row md:space-y-0">
-                  <Button type="button" variant="outline" onClick={resetForm} className="w-full md:w-auto">
-                    Cancel
-                  </Button>
-                  <Button type="submit" className="w-full md:w-auto">
-                    {editingCompetition ? "Update Competition" : "Create Competition"}
-                  </Button>
-                </DialogFooter>
-              </form>
+              </div>
+              <DialogFooter>
+                <Button type="submit" onClick={handleCreateCompetition}>
+                  Create Competition
+                </Button>
+              </DialogFooter>
             </DialogContent>
           </Dialog>
         </div>
 
-        <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-          {competitions.map((competition) => (
-            <Card key={competition.id} className="hover:shadow-lg transition-shadow">
-              <CardHeader>
-                <div className="flex justify-between items-start">
-                  <div className="min-w-0 flex-1">
-                    <CardTitle className="text-lg truncate">{competition.name}</CardTitle>
-                    <CardDescription className="mt-1">{competition.big_event_name}</CardDescription>
-                  </div>
-                  <Badge className={`${getStatusColor(competition.status)} ml-2 flex-shrink-0`}>
-                    {competition.status}
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground mb-4 line-clamp-2">
-                  {competition.description || "No description provided"}
-                </p>
-
-                <div className="grid grid-cols-3 gap-4 mb-4 text-center">
-                  <div>
-                    <div className="text-lg font-semibold text-primary">{competition.contestants_count}</div>
-                    <div className="text-xs text-muted-foreground">Contestants</div>
-                  </div>
-                  <div>
-                    <div className="text-lg font-semibold text-primary">{competition.judges_count}</div>
-                    <div className="text-xs text-muted-foreground">Judges</div>
-                  </div>
-                  <div>
-                    <div className="text-lg font-semibold text-primary">{competition.criteria_count}</div>
-                    <div className="text-xs text-muted-foreground">Criteria</div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <Button variant="outline" size="sm" onClick={() => handleManageCriteria(competition.id)}>
-                    <Settings className="h-4 w-4 mr-1" />
-                    <span className="hidden sm:inline">Criteria</span>
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => handleManageJudges(competition.id)}>
-                    <UserCheck className="h-4 w-4 mr-1" />
-                    <span className="hidden sm:inline">Judges</span>
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => handleManageContestants(competition.id)}>
-                    <Users className="h-4 w-4 mr-1" />
-                    <span className="hidden sm:inline">Contestants</span>
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => handleEdit(competition)}>
-                    <Edit className="h-4 w-4 mr-1" />
-                    <span className="hidden sm:inline">Edit</span>
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-
-        {/* Criteria Management Dialog */}
-        <Dialog open={criteriaDialogOpen} onOpenChange={setCriteriaDialogOpen}>
-          <DialogContent className="sm:max-w-[600px] mx-4 max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>Manage Judging Criteria</DialogTitle>
-              <DialogDescription>Set up the criteria and maximum points for judging this competition</DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4">
-              {/* Existing Criteria */}
-              <div className="space-y-2">
-                <Label>Current Criteria</Label>
-                <div className="max-h-60 overflow-y-auto space-y-2">
-                  {criteria.map((criterion) => (
-                    <div key={criterion.id} className="flex items-center justify-between p-3 border rounded-lg">
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium truncate">{criterion.name}</div>
-                        <div className="text-sm text-muted-foreground truncate">{criterion.description}</div>
-                      </div>
-                      <div className="flex items-center space-x-2 ml-2">
-                        <Badge variant="secondary">{criterion.max_points} pts</Badge>
-                        <Button variant="ghost" size="sm" onClick={() => removeCriteria(criterion.id)}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Add New Criteria */}
-              <div className="border-t pt-4">
-                <Label className="text-base font-medium">Add New Criteria</Label>
-                <div className="grid gap-3 mt-2">
-                  <Input
-                    placeholder="Criteria name"
-                    value={newCriteria.name}
-                    onChange={(e) => setNewCriteria({ ...newCriteria, name: e.target.value })}
-                  />
-                  <Input
-                    placeholder="Description"
-                    value={newCriteria.description}
-                    onChange={(e) => setNewCriteria({ ...newCriteria, description: e.target.value })}
-                  />
-                  <div className="grid grid-cols-2 gap-2">
-                    <Input
-                      type="number"
-                      placeholder="Max points"
-                      value={newCriteria.max_points}
-                      onChange={(e) => setNewCriteria({ ...newCriteria, max_points: Number(e.target.value) })}
-                    />
-                    <Input
-                      type="number"
-                      step="0.1"
-                      placeholder="Weight"
-                      value={newCriteria.weight}
-                      onChange={(e) => setNewCriteria({ ...newCriteria, weight: Number(e.target.value) })}
-                    />
-                  </div>
-                  <Button onClick={addCriteria} disabled={!newCriteria.name}>
-                    Add Criteria
-                  </Button>
-                </div>
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setCriteriaDialogOpen(false)}>
-                Close
-              </Button>
-              <Button onClick={() => setCriteriaDialogOpen(false)}>Save Criteria</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-        {/* Judges Management Dialog */}
-        <Dialog open={judgesDialogOpen} onOpenChange={setJudgesDialogOpen}>
-          <DialogContent className="sm:max-w-[600px] mx-4 max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>Assign Judges</DialogTitle>
-              <DialogDescription>Select judges to assign to this competition</DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>Available Judges</Label>
-                <div className="max-h-60 overflow-y-auto space-y-2">
-                  {availableJudges.map((judge) => (
-                    <div key={judge.id} className="flex items-center space-x-2 p-2 border rounded">
-                      <Checkbox
-                        checked={assignedJudges.some((j) => j.id === judge.id)}
-                        onCheckedChange={() => toggleJudgeAssignment(judge.id)}
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium truncate">{judge.full_name}</div>
-                        <div className="text-sm text-muted-foreground truncate">{judge.expertise}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setJudgesDialogOpen(false)}>
-                Cancel
-              </Button>
-              <Button onClick={() => setJudgesDialogOpen(false)}>Save Assignments</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-        {/* Contestants Management Dialog */}
-        <Dialog open={contestantsDialogOpen} onOpenChange={setContestantsDialogOpen}>
-          <DialogContent className="sm:max-w-[600px] mx-4 max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>Manage Contestants</DialogTitle>
-              <DialogDescription>View and manage contestants for this competition</DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>Assigned Contestants</Label>
-                <div className="max-h-60 overflow-y-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Name</TableHead>
-                        <TableHead>Email</TableHead>
-                        <TableHead>Status</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {assignedContestants.map((contestant) => (
-                        <TableRow key={contestant.id}>
-                          <TableCell className="font-medium">{contestant.contestant_name}</TableCell>
-                          <TableCell>{contestant.contestant_email}</TableCell>
-                          <TableCell>
-                            <Badge variant={contestant.status === "judged" ? "default" : "secondary"}>
-                              {contestant.status}
-                            </Badge>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setContestantsDialogOpen(false)}>
-                Close
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-        {competitions.length === 0 && (
+        {/* Stats Cards */}
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <Card>
-            <CardContent className="flex flex-col items-center justify-center py-12">
-              <Trophy className="h-12 w-12 text-muted-foreground mb-4" />
-              <h3 className="text-lg font-semibold mb-2">No competitions yet</h3>
-              <p className="text-muted-foreground text-center mb-4">Get started by creating your first competition</p>
-              <Button onClick={() => setDialogOpen(true)} className="w-full md:w-auto">
-                <Plus className="mr-2 h-4 w-4" />
-                Create Competition
-              </Button>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Total Competitions</CardTitle>
+              <Trophy className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{competitions.length}</div>
+              <p className="text-xs text-muted-foreground">All competitions</p>
             </CardContent>
           </Card>
-        )}
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Active</CardTitle>
+              <Calendar className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{competitions.filter((c) => c.status === "active").length}</div>
+              <p className="text-xs text-muted-foreground">Currently running</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Total Participants</CardTitle>
+              <Users className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">
+                {competitions.reduce((sum, c) => sum + (c.contestants?.[0]?.count || 0), 0)}
+              </div>
+              <p className="text-xs text-muted-foreground">Across all competitions</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Completed</CardTitle>
+              <Trophy className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{competitions.filter((c) => c.status === "completed").length}</div>
+              <p className="text-xs text-muted-foreground">Successfully finished</p>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Filters */}
+        <div className="flex flex-col sm:flex-row gap-4">
+          <div className="relative flex-1">
+            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search competitions..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-8"
+            />
+          </div>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-full sm:w-[180px]">
+              <Filter className="mr-2 h-4 w-4" />
+              <SelectValue placeholder="Filter by status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Status</SelectItem>
+              <SelectItem value="draft">Draft</SelectItem>
+              <SelectItem value="active">Active</SelectItem>
+              <SelectItem value="completed">Completed</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Competitions Table */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Competitions</CardTitle>
+            <CardDescription>A list of all competitions in the system.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Big Event</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Participants</TableHead>
+                  <TableHead>Judges</TableHead>
+                  <TableHead>Start Date</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredCompetitions.map((competition) => (
+                  <TableRow key={competition.id}>
+                    <TableCell className="font-medium">{competition.name}</TableCell>
+                    <TableCell>{competition.big_events?.name || "N/A"}</TableCell>
+                    <TableCell>{getStatusBadge(competition)}</TableCell>
+                    <TableCell>
+                      {competition.contestants?.[0]?.count || 0}/{competition.max_participants}
+                    </TableCell>
+                    <TableCell>{competition.judge_assignments?.[0]?.count || 0}</TableCell>
+                    <TableCell>{new Date(competition.start_date).toLocaleDateString()}</TableCell>
+                    <TableCell className="text-right">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" className="h-8 w-8 p-0">
+                            <span className="sr-only">Open menu</span>
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                          <DropdownMenuItem onClick={() => openEditDialog(competition)}>
+                            <Edit className="mr-2 h-4 w-4" />
+                            Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            onClick={() => handleDeleteCompetition(competition.id)}
+                            className="text-red-600"
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+
+        {/* Edit Dialog */}
+        <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+          <DialogContent className="sm:max-w-[425px]">
+            <DialogHeader>
+              <DialogTitle>Edit Competition</DialogTitle>
+              <DialogDescription>
+                Update the competition details. Make changes and save when you're done.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid gap-2">
+                <Label htmlFor="edit-name">Competition Name</Label>
+                <Input
+                  id="edit-name"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  placeholder="Enter competition name"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="edit-description">Description</Label>
+                <Textarea
+                  id="edit-description"
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  placeholder="Enter competition description"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="edit-big_event_id">Big Event</Label>
+                <Select
+                  value={formData.big_event_id}
+                  onValueChange={(value) => setFormData({ ...formData, big_event_id: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select big event" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {bigEvents.map((event) => (
+                      <SelectItem key={event.id} value={event.id}>
+                        {event.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="edit-maxParticipants">Max Participants</Label>
+                <Input
+                  id="edit-maxParticipants"
+                  type="number"
+                  value={formData.max_participants}
+                  onChange={(e) => setFormData({ ...formData, max_participants: e.target.value })}
+                  placeholder="Enter max participants"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="edit-startDate">Start Date</Label>
+                  <Input
+                    id="edit-startDate"
+                    type="date"
+                    value={formData.start_date}
+                    onChange={(e) => setFormData({ ...formData, start_date: e.target.value })}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="edit-endDate">End Date</Label>
+                  <Input
+                    id="edit-endDate"
+                    type="date"
+                    value={formData.end_date}
+                    onChange={(e) => setFormData({ ...formData, end_date: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="submit" onClick={handleEditCompetition}>
+                Save Changes
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </DashboardLayout>
   )

@@ -17,6 +17,7 @@ import { useTheme } from "next-themes"
 import { signOut } from "@/lib/auth"
 import { useRouter } from "next/navigation"
 import { useToast } from "@/hooks/use-toast"
+import { useAuth } from "@/lib/auth"
 
 interface UserNavProps {
   user: {
@@ -26,10 +27,11 @@ interface UserNavProps {
   }
 }
 
-export function UserNav({ user }: UserNavProps) {
+export function UserNav() {
   const { theme, setTheme } = useTheme()
   const router = useRouter()
   const { toast } = useToast()
+  const { user } = useAuth()
 
   // Add safety checks for user object
   const safeUser = {

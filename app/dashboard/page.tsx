@@ -6,8 +6,8 @@ import { Badge } from "@/components/ui/badge"
 import { CalendarDays, Trophy, Users, BarChart3, Plus, Eye, TrendingUp, FileSpreadsheet } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { DashboardLayout } from "@/components/layout/sidebar"
-import { getCurrentUser } from "@/lib/auth"
-import { mockData } from "@/lib/mock-data"
+import { useAuth } from "@/lib/auth"
+import { dashboardApi } from "@/lib/api"
 import { useRouter } from "next/navigation"
 import { useToast } from "@/hooks/use-toast"
 
@@ -16,18 +16,41 @@ interface DashboardStats {
   totalCompetitions: number
   totalJudges: number
   totalContestants: number
-  activeEvents: number
+  activeCompetitions: number
+}
+
+interface JudgeStats {
+  assignedEvents: number
+  judgingProgress: number
+  pendingReviews: number
+}
+
+interface ContestantStats {
+  registeredEvents: number
+  judgingStatus: string
+  averageScore: string
 }
 
 export default function DashboardPage() {
-  const [user, setUser] = useState<any>(null)
+  const { user } = useAuth()
   const [stats, setStats] = useState<DashboardStats>({
     totalBigEvents: 0,
     totalCompetitions: 0,
     totalJudges: 0,
     totalContestants: 0,
-    activeEvents: 0,
+    activeCompetitions: 0,
   })
+  const [judgeStats, setJudgeStats] = useState<JudgeStats>({
+    assignedEvents: 0,
+    judgingProgress: 0,
+    pendingReviews: 0
+  })
+  const [contestantStats, setContestantStats] = useState<ContestantStats>({
+    registeredEvents: 0,
+    judgingStatus: "Pending",
+    averageScore: "0"
+  })
+  const [recentActivity, setRecentActivity] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const router = useRouter()
   const { toast } = useToast()
@@ -35,18 +58,17 @@ export default function DashboardPage() {
   useEffect(() => {
     async function loadDashboard() {
       try {
-        const currentUser = await getCurrentUser()
-        setUser(currentUser)
-
-        if (currentUser?.role === "admin") {
-          // Load admin stats from mock data
-          setStats({
-            totalBigEvents: mockData.bigEvents?.length || 0,
-            totalCompetitions: mockData.competitions?.length || 0,
-            totalJudges: mockData.judges?.length || 0,
-            totalContestants: mockData.contestants?.length || 0,
-            activeEvents: mockData.competitions?.filter((c) => c.status === "active").length || 0,
-          })
+        if (user?.role === "admin") {
+          const dashboardStats = await dashboardApi.getStats()
+          const activity = await dashboardApi.getRecentActivity()
+          setStats(dashboardStats)
+          setRecentActivity(activity)
+        } else if (user?.role === "judge") {
+          const stats = await dashboardApi.getJudgeStats(user.id)
+          setJudgeStats(stats)
+        } else {
+          const stats = await dashboardApi.getContestantStats(user?.id || "")
+          setContestantStats(stats)
         }
       } catch (error) {
         console.error("Error loading dashboard:", error)
@@ -61,7 +83,7 @@ export default function DashboardPage() {
     }
 
     loadDashboard()
-  }, [toast])
+  }, [user, toast])
 
   const handleQuickAction = (action: string, title: string) => {
     toast({
@@ -146,7 +168,7 @@ export default function DashboardPage() {
             <div className="text-2xl font-bold">{stats.totalCompetitions}</div>
             <div className="flex items-center space-x-2 text-xs text-muted-foreground">
               <Badge variant="secondary" className="text-xs">
-                {stats.activeEvents} active
+                {stats.activeCompetitions} active
               </Badge>
             </div>
           </CardContent>
@@ -182,16 +204,18 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {mockData.analytics?.recentActivity?.map((activity) => (
+              {recentActivity.map((activity) => (
                 <div key={activity.id} className="flex items-start space-x-4">
-                  <div className={`w-2 h-2 bg-${activity.color}-500 rounded-full mt-2 flex-shrink-0`}></div>
+                  <div className="w-2 h-2 bg-green-500 rounded-full mt-2 flex-shrink-0"></div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium leading-none">{activity.message}</p>
-                    <p className="text-sm text-muted-foreground truncate">{activity.details}</p>
+                    <p className="text-sm font-medium leading-none">{activity.title}</p>
+                    <p className="text-sm text-muted-foreground truncate">{activity.description}</p>
                   </div>
-                  <div className="text-xs text-muted-foreground flex-shrink-0">{activity.timestamp}</div>
+                  <div className="text-xs text-muted-foreground flex-shrink-0">
+                    {new Date(activity.created_at).toLocaleTimeString()}
+                  </div>
                 </div>
-              )) || <p className="text-sm text-muted-foreground">No recent activity</p>}
+              ))}
             </div>
           </CardContent>
         </Card>
@@ -256,7 +280,7 @@ export default function DashboardPage() {
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl md:text-3xl font-bold tracking-tight">Judge Dashboard</h2>
-        <p className="text-muted-foreground">Welcome back! Here are your assigned events and judging progress.</p>
+        <p className="text-muted-foreground">Welcome back, {user?.full_name}! Here are your assigned events and judging progress.</p>
       </div>
 
       <div className="grid gap-4 grid-cols-1 md:grid-cols-3">
@@ -266,7 +290,7 @@ export default function DashboardPage() {
             <Trophy className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">3</div>
+            <div className="text-2xl font-bold">{judgeStats.assignedEvents}</div>
             <p className="text-xs text-muted-foreground">Active competitions</p>
           </CardContent>
         </Card>
@@ -277,8 +301,14 @@ export default function DashboardPage() {
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">75%</div>
-            <p className="text-xs text-muted-foreground">Completed submissions</p>
+            <div className="text-2xl font-bold">{judgeStats.judgingProgress}%</div>
+            <div className="w-full bg-gray-200 rounded-full h-2 mt-2">
+              <div 
+                className="bg-blue-600 h-2 rounded-full" 
+                style={{ width: `${judgeStats.judgingProgress}%` }}
+              ></div>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">Completed submissions</p>
           </CardContent>
         </Card>
 
@@ -288,7 +318,7 @@ export default function DashboardPage() {
             <Eye className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">5</div>
+            <div className="text-2xl font-bold">{judgeStats.pendingReviews}</div>
             <p className="text-xs text-muted-foreground">Contestants to judge</p>
           </CardContent>
         </Card>
@@ -342,7 +372,7 @@ export default function DashboardPage() {
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl md:text-3xl font-bold tracking-tight">Contestant Dashboard</h2>
-        <p className="text-muted-foreground">Track your participation and results across competitions.</p>
+        <p className="text-muted-foreground">Welcome back, {user?.name}! Track your participation and results.</p>
       </div>
 
       <div className="grid gap-4 grid-cols-1 md:grid-cols-3">
@@ -352,7 +382,7 @@ export default function DashboardPage() {
             <Trophy className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">2</div>
+            <div className="text-2xl font-bold">{contestantStats.registeredEvents}</div>
             <p className="text-xs text-muted-foreground">Active competitions</p>
           </CardContent>
         </Card>
@@ -363,8 +393,16 @@ export default function DashboardPage() {
             <Eye className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">In Progress</div>
-            <p className="text-xs text-muted-foreground">Current status</p>
+            <div className="text-2xl font-bold capitalize">{contestantStats.judgingStatus.toLowerCase()}</div>
+            <Badge 
+              variant={
+                contestantStats.judgingStatus === 'Completed' ? 'default' : 
+                contestantStats.judgingStatus === 'In Progress' ? 'secondary' : 'outline'
+              }
+              className="mt-1"
+            >
+              {contestantStats.judgingStatus}
+            </Badge>
           </CardContent>
         </Card>
 
@@ -374,8 +412,20 @@ export default function DashboardPage() {
             <BarChart3 className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">85.5</div>
-            <p className="text-xs text-muted-foreground">Across all events</p>
+            <div className="text-2xl font-bold">{contestantStats.averageScore}</div>
+            <div className="flex items-center mt-1">
+              {parseFloat(contestantStats.averageScore) > 85 ? (
+                <TrendingUp className="h-4 w-4 text-green-500 mr-1" />
+              ) : parseFloat(contestantStats.averageScore) > 70 ? (
+                <TrendingUp className="h-4 w-4 text-yellow-500 mr-1" />
+              ) : (
+                <TrendingUp className="h-4 w-4 text-red-500 mr-1" />
+              )}
+              <span className="text-xs text-muted-foreground">
+                {parseFloat(contestantStats.averageScore) > 85 ? 'Excellent' : 
+                 parseFloat(contestantStats.averageScore) > 70 ? 'Good' : 'Needs improvement'}
+              </span>
+            </div>
           </CardContent>
         </Card>
       </div>

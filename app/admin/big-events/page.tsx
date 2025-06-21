@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { useState, useEffect } from "react"
-import { Plus, Edit, Trash2, Eye } from "lucide-react"
+import { Plus, Edit, Trash2, Eye, CalendarDays, ChevronDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -21,9 +21,18 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { DashboardLayout } from "@/components/layout/sidebar"
-import { supabase } from "@/lib/supabase"
-import { getCurrentUser } from "@/lib/auth"
-import { CalendarDays } from "lucide-react"
+import { useAuth } from "@/lib/auth"
+import { bigEventsApi } from "@/lib/api"
+import { useToast } from "@/hooks/use-toast"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { useConfirmToast } from "@/hooks/use-confirm-toast"
 
 interface BigEvent {
   id: string
@@ -33,9 +42,11 @@ interface BigEvent {
   end_date: string
   status: "draft" | "active" | "completed" | "cancelled"
   created_at: string
+  created_by: string
 }
 
 export default function BigEventsPage() {
+  const { user } = useAuth()
   const [events, setEvents] = useState<BigEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -47,58 +58,62 @@ export default function BigEventsPage() {
     end_date: "",
     status: "draft" as const,
   })
+  const [viewDialogOpen, setViewDialogOpen] = useState(false)
+  const [viewingEvent, setViewingEvent] = useState<BigEvent | null>(null)
+  const [updatingStatus, setUpdatingStatus] = useState<Record<string, boolean>>({})
+  const { toast } = useToast()
+  const { confirm, ConfirmDialog } = useConfirmToast()
 
   useEffect(() => {
     loadEvents()
   }, [])
 
   const loadEvents = async () => {
-    const { data, error } = await supabase.from("big_events").select("*").order("created_at", { ascending: false })
-
-    if (data) {
+    try {
+      const data = await bigEventsApi.getAll()
       setEvents(data)
+    } catch (error) {
+      console.error("Error loading events:", error)
+      toast({
+        title: "Error",
+        description: "Failed to load events.",
+        variant: "destructive",
+      })
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
     try {
-      const user = await getCurrentUser()
-      if (!user) {
-        console.error("No authenticated user found")
-        return
-      }
-
       if (editingEvent) {
-        // Update existing event
-        const { error } = await supabase.from("big_events").update(formData).eq("id", editingEvent.id)
-
-        if (error) {
-          console.error("Error updating event:", error)
-          return
-        }
-
-        await loadEvents()
-        resetForm()
-      } else {
-        // Create new event
-        const { error } = await supabase.from("big_events").insert({
-          ...formData,
-          created_by: user.id,
+        await bigEventsApi.update(editingEvent.id, formData)
+        toast({
+          title: "Success",
+          description: "Event updated successfully.",
         })
-
-        if (error) {
-          console.error("Error creating event:", error)
-          return
-        }
-
-        await loadEvents()
-        resetForm()
+      } else {
+        await bigEventsApi.create({
+          ...formData,
+          created_by: user?.id || "",
+        })
+        toast({
+          title: "Success",
+          description: "Event created successfully.",
+        })
       }
+
+      await loadEvents()
+      resetForm()
     } catch (error) {
-      console.error("Error in form submission:", error)
+      console.error("Error saving event:", error)
+      toast({
+        title: "Error",
+        description: "Failed to save event.",
+        variant: "destructive",
+      })
     }
   }
 
@@ -119,21 +134,40 @@ export default function BigEventsPage() {
     setFormData({
       name: event.name,
       description: event.description || "",
-      start_date: event.start_date,
-      end_date: event.end_date,
+      start_date: formatDateForInput(event.start_date),
+      end_date: formatDateForInput(event.end_date),
       status: event.status,
     })
     setDialogOpen(true)
   }
 
   const handleDelete = async (eventId: string) => {
-    if (confirm("Are you sure you want to delete this event?")) {
-      const { error } = await supabase.from("big_events").delete().eq("id", eventId)
+    const shouldDelete = await confirm(
+      "Are you sure you want to delete this event and all its competitions? This action cannot be undone."
+    )
+    
+    if (!shouldDelete) return
 
-      if (!error) {
-        loadEvents()
-      }
+    try {
+      await bigEventsApi.delete(eventId)
+      await loadEvents()
+      toast({
+        title: "Success",
+        description: "Event and all its competitions deleted successfully.",
+      })
+    } catch (error) {
+      console.error("Error deleting event:", error)
+      toast({
+        title: "Error",
+        description: "Failed to delete event.",
+        variant: "destructive",
+      })
     }
+  }
+
+  const handleView = (event: BigEvent) => {
+    setViewingEvent(event)
+    setViewDialogOpen(true)
   }
 
   const getStatusColor = (status: string) => {
@@ -149,9 +183,96 @@ export default function BigEventsPage() {
     }
   }
 
+  const getStatusBadge = (event: BigEvent) => {
+    const status = event.status
+    const isLoading = updatingStatus[event.id]
+    
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" className="h-8 p-0" disabled={isLoading}>
+            {isLoading ? (
+              <div className="flex items-center gap-2">
+                <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-primary"></div>
+                <span>Updating...</span>
+              </div>
+            ) : (
+              <Badge className={`${getStatusColor(status)} hover:opacity-80 cursor-pointer`}>
+                <div className="flex items-center">
+                  {status}
+                  <ChevronDown className="ml-1 h-3 w-3" />
+                </div>
+              </Badge>
+            )}
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-40">
+          <DropdownMenuLabel>Change Status</DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem 
+            onClick={() => handleStatusUpdate(event.id, "draft")}
+            disabled={status === "draft"}
+          >
+            <div className={`w-2 h-2 rounded-full mr-2 ${status === "draft" ? 'bg-yellow-500' : 'bg-gray-200'}`} />
+            Draft
+          </DropdownMenuItem>
+          <DropdownMenuItem 
+            onClick={() => handleStatusUpdate(event.id, "active")}
+            disabled={status === "active"}
+          >
+            <div className={`w-2 h-2 rounded-full mr-2 ${status === "active" ? 'bg-green-500' : 'bg-gray-200'}`} />
+            Active
+          </DropdownMenuItem>
+          <DropdownMenuItem 
+            onClick={() => handleStatusUpdate(event.id, "completed")}
+            disabled={status === "completed"}
+          >
+            <div className={`w-2 h-2 rounded-full mr-2 ${status === "completed" ? 'bg-blue-500' : 'bg-gray-200'}`} />
+            Completed
+          </DropdownMenuItem>
+          <DropdownMenuItem 
+            onClick={() => handleStatusUpdate(event.id, "cancelled")}
+            disabled={status === "cancelled"}
+          >
+            <div className={`w-2 h-2 rounded-full mr-2 ${status === "cancelled" ? 'bg-red-500' : 'bg-gray-200'}`} />
+            Cancelled
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    )
+  }
+
+  const formatDateForInput = (dateString: string) => {
+    if (!dateString) return ''
+    const date = new Date(dateString)
+    return date.toISOString().split('T')[0]
+  }
+
+  const handleStatusUpdate = async (eventId: string, newStatus: "draft" | "active" | "completed" | "cancelled") => {
+    setUpdatingStatus(prev => ({ ...prev, [eventId]: true }))
+    
+    try {
+      await bigEventsApi.updateStatus(eventId, newStatus)
+      await loadEvents()
+      toast({
+        title: "Success",
+        description: "Event status updated successfully.",
+      })
+    } catch (error) {
+      console.error("Error updating status:", error)
+      toast({
+        title: "Error",
+        description: "Failed to update event status.",
+        variant: "destructive",
+      })
+    } finally {
+      setUpdatingStatus(prev => ({ ...prev, [eventId]: false }))
+    }
+  }
+
   if (loading) {
     return (
-      <DashboardLayout userRole="admin">
+      <DashboardLayout userRole="admin" user={user}>
         <div className="flex items-center justify-center min-h-[400px]">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
         </div>
@@ -160,7 +281,7 @@ export default function BigEventsPage() {
   }
 
   return (
-    <DashboardLayout userRole="admin">
+    <DashboardLayout userRole="admin" user={user}>
       <div className="space-y-6">
         <div className="flex flex-col space-y-4 md:flex-row md:items-center md:justify-between md:space-y-0">
           <div>
@@ -271,7 +392,7 @@ export default function BigEventsPage() {
                       {new Date(event.end_date).toLocaleDateString()}
                     </CardDescription>
                   </div>
-                  <Badge className={`${getStatusColor(event.status)} ml-2 flex-shrink-0`}>{event.status}</Badge>
+                  {getStatusBadge(event)}
                 </div>
               </CardHeader>
               <CardContent>
@@ -280,7 +401,7 @@ export default function BigEventsPage() {
                 </p>
 
                 <div className="flex justify-end space-x-2">
-                  <Button variant="outline" size="sm">
+                  <Button variant="outline" size="sm" onClick={() => handleView(event)}>
                     <Eye className="h-4 w-4" />
                     <span className="sr-only">View</span>
                   </Button>
@@ -298,6 +419,56 @@ export default function BigEventsPage() {
           ))}
         </div>
 
+        <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
+        <DialogContent className="sm:max-w-[600px]">
+          <DialogHeader>
+            <DialogTitle>{viewingEvent?.name}</DialogTitle>
+            <DialogDescription>
+              Event details
+            </DialogDescription>
+          </DialogHeader>
+          {viewingEvent && (
+            <div className="space-y-4">
+              <div>
+                <Label>Status</Label>
+                <div className="mt-1">
+                  <Badge className={getStatusColor(viewingEvent.status)}>
+                    {viewingEvent.status}
+                  </Badge>
+                </div>
+              </div>
+              
+              <div>
+                <Label>Date Range</Label>
+                <p className="mt-1 text-sm">
+                  {new Date(viewingEvent.start_date).toLocaleDateString()} -{" "}
+                  {new Date(viewingEvent.end_date).toLocaleDateString()}
+                </p>
+              </div>
+              
+              <div>
+                <Label>Description</Label>
+                <p className="mt-1 text-sm">
+                  {viewingEvent.description || "No description provided"}
+                </p>
+              </div>
+              
+              <div>
+                <Label>Created At</Label>
+                <p className="mt-1 text-sm">
+                  {new Date(viewingEvent.created_at).toLocaleString()}
+                </p>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setViewDialogOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
         {events.length === 0 && (
           <Card>
             <CardContent className="flex flex-col items-center justify-center py-12">
@@ -312,6 +483,7 @@ export default function BigEventsPage() {
           </Card>
         )}
       </div>
+      <ConfirmDialog />
     </DashboardLayout>
   )
 }

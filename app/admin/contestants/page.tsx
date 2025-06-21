@@ -21,105 +21,96 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { DashboardLayout } from "@/components/layout/sidebar"
+import { useAuth } from "@/lib/auth"
+import { contestantsApi, competitionsApi } from "@/lib/api"
+import { useToast } from "@/hooks/use-toast"
 
 interface Contestant {
   id: string
   contestant_name: string
   contestant_email: string
   registration_number: string
-  event_name: string
-  event_id: string
+  competition_id: string
   status: "registered" | "submitted" | "judged"
   registered_at: string
-  average_score?: number
-  rank?: number
+  additional_info?: any
+  competitions?: { name: string }
+  scores?: { score: number }[]
+}
+
+interface Competition {
+  id: string
+  name: string
 }
 
 export default function ContestantsPage() {
+  const { user } = useAuth()
   const [contestants, setContestants] = useState<Contestant[]>([])
-  const [events, setEvents] = useState<any[]>([])
+  const [competitions, setCompetitions] = useState<Competition[]>([])
   const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingContestant, setEditingContestant] = useState<Contestant | null>(null)
   const [searchTerm, setSearchTerm] = useState("")
-  const [selectedEvent, setSelectedEvent] = useState("all")
+  const [selectedCompetition, setSelectedCompetition] = useState("all")
   const [formData, setFormData] = useState({
     contestant_name: "",
     contestant_email: "",
     registration_number: "",
-    event_id: "",
+    competition_id: "",
     additional_info: "",
   })
+  const { toast } = useToast()
 
   useEffect(() => {
     loadData()
   }, [])
 
   const loadData = async () => {
-    // Mock data for demo
-    const mockEvents = [
-      { id: "1", name: "Best Undergraduate Project" },
-      { id: "2", name: "Innovation Challenge" },
-      { id: "3", name: "Research Presentation" },
-    ]
+    try {
+      const [contestantsData, competitionsData] = await Promise.all([contestantsApi.getAll(), competitionsApi.getAll()])
 
-    const mockContestants: Contestant[] = [
-      {
-        id: "1",
-        contestant_name: "Alice Johnson",
-        contestant_email: "alice.johnson@university.edu",
-        registration_number: "UG001",
-        event_name: "Best Undergraduate Project",
-        event_id: "1",
-        status: "judged",
-        registered_at: "2024-02-15",
-        average_score: 87.5,
-        rank: 1,
-      },
-      {
-        id: "2",
-        contestant_name: "Bob Chen",
-        contestant_email: "bob.chen@university.edu",
-        registration_number: "UG002",
-        event_name: "Best Undergraduate Project",
-        event_id: "1",
-        status: "judged",
-        registered_at: "2024-02-16",
-        average_score: 82.3,
-        rank: 2,
-      },
-      {
-        id: "3",
-        contestant_name: "Carol Davis",
-        contestant_email: "carol.davis@university.edu",
-        registration_number: "UG003",
-        event_name: "Innovation Challenge",
-        event_id: "2",
-        status: "submitted",
-        registered_at: "2024-02-17",
-      },
-      {
-        id: "4",
-        contestant_name: "David Wilson",
-        contestant_email: "david.wilson@university.edu",
-        registration_number: "IC001",
-        event_name: "Innovation Challenge",
-        event_id: "2",
-        status: "registered",
-        registered_at: "2024-02-18",
-      },
-    ]
-
-    setEvents(mockEvents)
-    setContestants(mockContestants)
-    setLoading(false)
+      setContestants(contestantsData)
+      setCompetitions(competitionsData)
+    } catch (error) {
+      console.error("Error loading data:", error)
+      toast({
+        title: "Error",
+        description: "Failed to load contestants data.",
+        variant: "destructive",
+      })
+    } finally {
+      setLoading(false)
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    console.log("Creating/updating contestant:", formData)
-    resetForm()
-    loadData()
+
+    try {
+      if (editingContestant) {
+        await contestantsApi.update(editingContestant.id, formData)
+        toast({
+          title: "Success",
+          description: "Contestant updated successfully.",
+        })
+      } else {
+        await contestantsApi.create(formData)
+        toast({
+          title: "Success",
+          description: "Contestant created successfully.",
+        })
+      }
+
+      await loadData()
+      resetForm()
+    } catch (error) {
+      console.error("Error saving contestant:", error)
+      toast({
+        title: "Error",
+        description: "Failed to save contestant.",
+        variant: "destructive",
+      })
+    }
   }
 
   const resetForm = () => {
@@ -127,7 +118,7 @@ export default function ContestantsPage() {
       contestant_name: "",
       contestant_email: "",
       registration_number: "",
-      event_id: "",
+      competition_id: "",
       additional_info: "",
     })
     setEditingContestant(null)
@@ -140,33 +131,46 @@ export default function ContestantsPage() {
       contestant_name: contestant.contestant_name,
       contestant_email: contestant.contestant_email,
       registration_number: contestant.registration_number,
-      event_id: contestant.event_id,
-      additional_info: "",
+      competition_id: contestant.competition_id,
+      additional_info: contestant.additional_info?.info || "",
     })
     setDialogOpen(true)
   }
 
   const handleDelete = async (contestantId: string) => {
     if (confirm("Are you sure you want to remove this contestant?")) {
-      console.log("Deleting contestant:", contestantId)
-      loadData()
+      try {
+        await contestantsApi.delete(contestantId)
+        await loadData()
+        toast({
+          title: "Success",
+          description: "Contestant deleted successfully.",
+        })
+      } catch (error) {
+        console.error("Error deleting contestant:", error)
+        toast({
+          title: "Error",
+          description: "Failed to delete contestant.",
+          variant: "destructive",
+        })
+      }
     }
   }
 
   const exportContestants = () => {
     const csvContent = [
-      ["Name", "Email", "Registration Number", "Event", "Status", "Average Score", "Rank"].join(","),
-      ...filteredContestants.map((c) =>
-        [
+      ["Name", "Email", "Registration Number", "Competition", "Status", "Average Score"].join(","),
+      ...filteredContestants.map((c) => {
+        const avgScore = c.scores?.length ? c.scores.reduce((sum, s) => sum + s.score, 0) / c.scores.length : 0
+        return [
           c.contestant_name,
           c.contestant_email,
           c.registration_number,
-          c.event_name,
+          c.competitions?.name || "",
           c.status,
-          c.average_score || "",
-          c.rank || "",
-        ].join(","),
-      ),
+          avgScore.toFixed(1),
+        ].join(",")
+      }),
     ].join("\n")
 
     const blob = new Blob([csvContent], { type: "text/csv" })
@@ -184,9 +188,9 @@ export default function ContestantsPage() {
       contestant.contestant_email.toLowerCase().includes(searchTerm.toLowerCase()) ||
       contestant.registration_number.toLowerCase().includes(searchTerm.toLowerCase())
 
-    const matchesEvent = selectedEvent === "all" || contestant.event_id === selectedEvent
+    const matchesCompetition = selectedCompetition === "all" || contestant.competition_id === selectedCompetition
 
-    return matchesSearch && matchesEvent
+    return matchesSearch && matchesCompetition
   })
 
   const getStatusColor = (status: string) => {
@@ -204,7 +208,7 @@ export default function ContestantsPage() {
 
   if (loading) {
     return (
-      <DashboardLayout userRole="admin">
+      <DashboardLayout userRole="admin" user={user}>
         <div className="flex items-center justify-center min-h-[400px]">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
         </div>
@@ -213,7 +217,7 @@ export default function ContestantsPage() {
   }
 
   return (
-    <DashboardLayout userRole="admin">
+    <DashboardLayout userRole="admin" user={user}>
       <div className="space-y-6">
         <div className="flex flex-col space-y-4 md:flex-row md:items-center md:justify-between md:space-y-0">
           <div>
@@ -276,18 +280,18 @@ export default function ContestantsPage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="event_id">Competition</Label>
+                      <Label htmlFor="competition_id">Competition</Label>
                       <Select
-                        value={formData.event_id}
-                        onValueChange={(value) => setFormData({ ...formData, event_id: value })}
+                        value={formData.competition_id}
+                        onValueChange={(value) => setFormData({ ...formData, competition_id: value })}
                       >
                         <SelectTrigger>
                           <SelectValue placeholder="Select competition" />
                         </SelectTrigger>
                         <SelectContent>
-                          {events.map((event) => (
-                            <SelectItem key={event.id} value={event.id}>
-                              {event.name}
+                          {competitions.map((competition) => (
+                            <SelectItem key={competition.id} value={competition.id}>
+                              {competition.name}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -374,15 +378,15 @@ export default function ContestantsPage() {
               className="pl-10"
             />
           </div>
-          <Select value={selectedEvent} onValueChange={setSelectedEvent}>
+          <Select value={selectedCompetition} onValueChange={setSelectedCompetition}>
             <SelectTrigger className="w-full md:w-[200px]">
-              <SelectValue placeholder="Filter by event" />
+              <SelectValue placeholder="Filter by competition" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Events</SelectItem>
-              {events.map((event) => (
-                <SelectItem key={event.id} value={event.id}>
-                  {event.name}
+              <SelectItem value="all">All Competitions</SelectItem>
+              {competitions.map((competition) => (
+                <SelectItem key={competition.id} value={competition.id}>
+                  {competition.name}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -402,39 +406,41 @@ export default function ContestantsPage() {
                   <TableHead>Name</TableHead>
                   <TableHead>Email</TableHead>
                   <TableHead>Registration #</TableHead>
-                  <TableHead>Event</TableHead>
+                  <TableHead>Competition</TableHead>
                   <TableHead className="text-center">Status</TableHead>
-                  <TableHead className="text-center">Score</TableHead>
-                  <TableHead className="text-center">Rank</TableHead>
+                  <TableHead className="text-center">Avg Score</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredContestants.map((contestant) => (
-                  <TableRow key={contestant.id}>
-                    <TableCell className="font-medium">{contestant.contestant_name}</TableCell>
-                    <TableCell>{contestant.contestant_email}</TableCell>
-                    <TableCell>{contestant.registration_number}</TableCell>
-                    <TableCell>{contestant.event_name}</TableCell>
-                    <TableCell className="text-center">
-                      <Badge className={getStatusColor(contestant.status)}>{contestant.status}</Badge>
-                    </TableCell>
-                    <TableCell className="text-center">
-                      {contestant.average_score ? `${contestant.average_score}%` : "-"}
-                    </TableCell>
-                    <TableCell className="text-center">{contestant.rank ? `#${contestant.rank}` : "-"}</TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end space-x-2">
-                        <Button variant="ghost" size="sm" onClick={() => handleEdit(contestant)}>
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => handleDelete(contestant.id)}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {filteredContestants.map((contestant) => {
+                  const avgScore = contestant.scores?.length
+                    ? contestant.scores.reduce((sum, s) => sum + s.score, 0) / contestant.scores.length
+                    : 0
+
+                  return (
+                    <TableRow key={contestant.id}>
+                      <TableCell className="font-medium">{contestant.contestant_name}</TableCell>
+                      <TableCell>{contestant.contestant_email}</TableCell>
+                      <TableCell>{contestant.registration_number}</TableCell>
+                      <TableCell>{contestant.competitions?.name || "N/A"}</TableCell>
+                      <TableCell className="text-center">
+                        <Badge className={getStatusColor(contestant.status)}>{contestant.status}</Badge>
+                      </TableCell>
+                      <TableCell className="text-center">{avgScore > 0 ? `${avgScore.toFixed(1)}%` : "-"}</TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end space-x-2">
+                          <Button variant="ghost" size="sm" onClick={() => handleEdit(contestant)}>
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button variant="ghost" size="sm" onClick={() => handleDelete(contestant.id)}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
               </TableBody>
             </Table>
           </CardContent>
@@ -446,11 +452,11 @@ export default function ContestantsPage() {
               <Search className="h-12 w-12 text-muted-foreground mb-4" />
               <h3 className="text-lg font-semibold mb-2">No contestants found</h3>
               <p className="text-muted-foreground text-center mb-4">
-                {searchTerm || selectedEvent !== "all"
+                {searchTerm || selectedCompetition !== "all"
                   ? "Try adjusting your search or filter criteria"
                   : "Add contestants to start managing participants"}
               </p>
-              {!searchTerm && selectedEvent === "all" && (
+              {!searchTerm && selectedCompetition === "all" && (
                 <Button onClick={() => setDialogOpen(true)} className="w-full md:w-auto">
                   <Plus className="mr-2 h-4 w-4" />
                   Add Contestant

@@ -1,71 +1,22 @@
+"use client"
+
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react"
 import { supabase } from "./supabase"
-import { mockData } from "./mock-data"
+import React from 'react'
 
-// Hardcoded demo accounts - no database lookup needed
-const DEMO_ACCOUNTS = {
-  "admin@judgingportal.com": {
-    password: "admin123",
-    profile: mockData.users.admin,
-  },
-  "judge@judgingportal.com": {
-    password: "judge123",
-    profile: mockData.users.judge,
-  },
-  "contestant@judgingportal.com": {
-    password: "contestant123",
-    profile: mockData.users.contestant,
-  },
-}
-
-// Store current user in session storage
-const getCurrentUserFromStorage = () => {
-  if (typeof window === "undefined") return null
-  const stored = sessionStorage.getItem("current_user")
-  return stored ? JSON.parse(stored) : null
-}
-
-const setCurrentUserInStorage = (user: any) => {
-  if (typeof window === "undefined") return
-  if (user) {
-    sessionStorage.setItem("current_user", JSON.stringify(user))
-  } else {
-    sessionStorage.removeItem("current_user")
-  }
-}
-
+// Auth functions using custom profiles table
 export async function getCurrentUser() {
   try {
-    // First check session storage for demo user
-    const storedUser = getCurrentUserFromStorage()
-    if (storedUser) {
-      return storedUser
+    // Check session storage first
+    if (typeof window !== "undefined") {
+      const stored = sessionStorage.getItem("current_user")
+      if (stored) {
+        return JSON.parse(stored)
+      }
     }
-
-    // Fallback to Supabase auth (for future real users)
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser()
-
-    if (authError || !user) {
-      return null
-    }
-
-    // Try to get profile from database
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", user.id)
-      .single()
-
-    if (profileError) {
-      console.error("Profile error:", profileError)
-      return null
-    }
-
-    return profile
+    return null
   } catch (error) {
-    console.error("Error in getCurrentUser:", error)
+    console.error("Error getting current user:", error)
     return null
   }
 }
@@ -74,113 +25,160 @@ export async function signIn(email: string, password: string) {
   try {
     const cleanEmail = email.trim().toLowerCase()
 
-    // Check demo accounts first
-    const demoAccount = DEMO_ACCOUNTS[cleanEmail as keyof typeof DEMO_ACCOUNTS]
-    if (demoAccount) {
-      if (demoAccount.password === password) {
-        // Store demo user in session
-        setCurrentUserInStorage(demoAccount.profile)
-        return {
-          data: {
-            user: {
-              id: demoAccount.profile.id,
-              email: demoAccount.profile.email,
-            },
-          },
-          error: null,
-        }
-      } else {
-        return {
-          data: null,
-          error: new Error("Invalid email or password"),
-        }
+    // Query our custom profiles table
+    const { data: user, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("email", cleanEmail)
+      .eq("password", password)
+      .eq("is_active", true)
+      .single()
+
+    if (error || !user) {
+      return {
+        data: null,
+        error: new Error("Invalid email or password"),
       }
     }
 
-    // For non-demo accounts, try Supabase auth
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: cleanEmail,
-      password,
-    })
+    // Update last login
+    await supabase.from("profiles").update({ last_login: new Date().toISOString() }).eq("id", user.id)
 
-    if (error) {
-      // Map common Supabase errors to user-friendly messages
-      const errorMessages: Record<string, string> = {
-        "Database error querying schema": "Invalid email or password",
-        "Invalid login credentials": "Invalid email or password",
-        "Email not confirmed": "Please confirm your email address",
-        "Too many requests": "Too many login attempts. Please try again later",
-      }
-
-      const friendlyMessage = errorMessages[error.message] || "Login failed. Please try again."
-      return { data: null, error: new Error(friendlyMessage) }
+    // Store user in session
+    if (typeof window !== "undefined") {
+      sessionStorage.setItem("current_user", JSON.stringify(user))
     }
 
-    return { data, error: null }
+    return {
+      data: { user },
+      error: null,
+    }
   } catch (error) {
-    console.error("Unexpected sign in error:", error)
+    console.error("Sign in error:", error)
     return {
       data: null,
-      error: new Error("An unexpected error occurred. Please try again."),
+      error: new Error("Login failed. Please try again."),
     }
   }
 }
 
 export async function signOut() {
   try {
-    // Clear demo user from session
-    setCurrentUserInStorage(null)
-
-    // Also sign out from Supabase
-    const { error } = await supabase.auth.signOut()
-    return { error }
+    // Clear session storage
+    if (typeof window !== "undefined") {
+      sessionStorage.removeItem("current_user")
+    }
+    return { error: null }
   } catch (error) {
     console.error("Sign out error:", error)
     return { error: error as Error }
   }
 }
 
-export async function createJudge(email: string, fullName: string) {
-  try {
-    // Generate a temporary password
-    const tempPassword = Math.random().toString(36).slice(-8)
+// Auth context
+interface AuthContextType {
+  user: any | null
+  loading: boolean
+  signIn: (email: string, password: string) => Promise<{ data: any; error: Error | null }>
+  signOut: () => Promise<{ error: Error | null }>
+}
 
-    // Create auth user
-    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-      email,
-      password: tempPassword,
-      email_confirm: true,
+const AuthContext = createContext<AuthContextType | undefined>(undefined)
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<any | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    // Check for existing session on mount
+    getCurrentUser().then((currentUser) => {
+      setUser(currentUser)
+      setLoading(false)
     })
+  }, [])
 
-    if (authError) {
-      console.error("Auth error:", authError)
-      return { error: authError }
+  const handleSignIn = async (email: string, password: string) => {
+    const result = await signIn(email, password)
+    if (result.data?.user) {
+      setUser(result.data.user)
     }
+    return result
+  }
 
-    if (!authData.user) {
-      return { error: new Error("Failed to create user") }
-    }
+  const handleSignOut = async () => {
+    const result = await signOut()
+    setUser(null)
+    return result
+  }
 
-    // Create profile
-    const { data: profile, error: profileError } = await supabase
+  return React.createElement(
+    AuthContext.Provider,
+    {
+      value:{ user, loading, signIn: handleSignIn, signOut: handleSignOut }
+    },
+    children
+  )
+}
+
+export function useAuth() {
+  const context = useContext(AuthContext)
+  if (context === undefined) {
+    throw new Error("useAuth must be used within an AuthProvider")
+  }
+  return context
+}
+
+// Additional helper functions for user management
+export async function createUser(email: string, password: string, fullName: string, role: string) {
+  try {
+    const { data, error } = await supabase
       .from("profiles")
       .insert({
-        id: authData.user.id,
-        email,
+        email: email.trim().toLowerCase(),
+        password,
         full_name: fullName,
-        role: "judge",
+        role,
+        is_active: true,
       })
       .select()
       .single()
 
-    if (profileError) {
-      console.error("Profile error:", profileError)
-      return { error: profileError }
+    if (error) {
+      return { error }
     }
 
-    return { data: { profile, tempPassword }, error: null }
+    return { data, error: null }
   } catch (error) {
-    console.error("Unexpected error in createJudge:", error)
+    console.error("Error creating user:", error)
     return { error: error instanceof Error ? error : new Error("Unknown error") }
+  }
+}
+
+export async function updateUserPassword(userId: string, newPassword: string) {
+  try {
+    const { error } = await supabase.from("profiles").update({ password: newPassword }).eq("id", userId)
+
+    return { error }
+  } catch (error) {
+    console.error("Error updating password:", error)
+    return { error: error instanceof Error ? error : new Error("Unknown error") }
+  }
+}
+
+export async function getAllUsers() {
+  try {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id, email, full_name, role, is_active, last_login, created_at")
+      .order("created_at", { ascending: false })
+
+    if (error) {
+      return { data: null, error }
+    }
+
+    return { data, error: null }
+  } catch (error) {
+    console.error("Error getting users:", error)
+    return { data: null, error: error instanceof Error ? error : new Error("Unknown error") }
   }
 }

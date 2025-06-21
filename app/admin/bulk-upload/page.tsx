@@ -12,10 +12,20 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Progress } from "@/components/ui/progress"
 import { DashboardLayout } from "@/components/layout/sidebar"
-import { supabase } from "@/lib/supabase"
+import { useAuth } from "@/lib/auth"
+import { contestantsApi, competitionsApi } from "@/lib/api"
+import { useToast } from "@/hooks/use-toast"
+import { useEffect } from "react"
+
+interface Competition {
+  id: string
+  name: string
+}
 
 export default function BulkUploadPage() {
-  const [selectedEvent, setSelectedEvent] = useState("")
+  const { user } = useAuth()
+  const [competitions, setCompetitions] = useState<Competition[]>([])
+  const [selectedCompetition, setSelectedCompetition] = useState("")
   const [file, setFile] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
@@ -23,6 +33,25 @@ export default function BulkUploadPage() {
     success: number
     errors: string[]
   } | null>(null)
+  const { toast } = useToast()
+
+  useEffect(() => {
+    loadCompetitions()
+  }, [])
+
+  const loadCompetitions = async () => {
+    try {
+      const data = await competitionsApi.getAll()
+      setCompetitions(data)
+    } catch (error) {
+      console.error("Error loading competitions:", error)
+      toast({
+        title: "Error",
+        description: "Failed to load competitions.",
+        variant: "destructive",
+      })
+    }
+  }
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0]
@@ -33,7 +62,6 @@ export default function BulkUploadPage() {
   }
 
   const downloadTemplate = () => {
-    // Create CSV template
     const csvContent =
       "contestant_name,contestant_email,registration_number,additional_info\nJohn Doe,john@example.com,REG001,Computer Science Student\nJane Smith,jane@example.com,REG002,Engineering Student"
 
@@ -68,7 +96,7 @@ export default function BulkUploadPage() {
   }
 
   const handleUpload = async () => {
-    if (!file || !selectedEvent) return
+    if (!file || !selectedCompetition) return
 
     setUploading(true)
     setUploadProgress(0)
@@ -81,27 +109,29 @@ export default function BulkUploadPage() {
       let successCount = 0
       const errors: string[] = []
 
-      for (let i = 0; i < contestants.length; i++) {
-        const contestant = contestants[i]
-        setUploadProgress(((i + 1) / contestants.length) * 100)
+      const contestantData = contestants.map((contestant, index) => {
+        setUploadProgress(((index + 1) / contestants.length) * 100)
 
-        try {
-          const { error } = await supabase.from("contestants").insert({
-            small_event_id: selectedEvent,
-            contestant_name: contestant.contestant_name || "",
-            contestant_email: contestant.contestant_email || "",
-            registration_number: contestant.registration_number || null,
-            additional_info: contestant.additional_info ? { info: contestant.additional_info } : {},
-          })
-
-          if (error) {
-            errors.push(`Row ${i + 2}: ${error.message}`)
-          } else {
-            successCount++
-          }
-        } catch (err) {
-          errors.push(`Row ${i + 2}: Failed to process - ${err instanceof Error ? err.message : "Unknown error"}`)
+        return {
+          competition_id: selectedCompetition,
+          contestant_name: contestant.contestant_name || "",
+          contestant_email: contestant.contestant_email || "",
+          registration_number: contestant.registration_number || `REG${Date.now()}_${index}`,
+          additional_info: contestant.additional_info ? { info: contestant.additional_info } : {},
+          status: "registered" as const,
         }
+      })
+
+      try {
+        await contestantsApi.bulkCreate(contestantData)
+        successCount = contestantData.length
+
+        toast({
+          title: "Success",
+          description: `Successfully uploaded ${successCount} contestants.`,
+        })
+      } catch (error: any) {
+        errors.push(`Bulk upload failed: ${error.message}`)
       }
 
       setUploadResult({ success: successCount, errors })
@@ -117,7 +147,7 @@ export default function BulkUploadPage() {
   }
 
   return (
-    <DashboardLayout userRole="admin">
+    <DashboardLayout userRole="admin" user={user}>
       <div className="space-y-6">
         <div>
           <h2 className="text-2xl md:text-3xl font-bold tracking-tight">Bulk Upload</h2>
@@ -157,19 +187,21 @@ export default function BulkUploadPage() {
                 <Upload className="h-5 w-5" />
                 Upload Contestants
               </CardTitle>
-              <CardDescription>Select an event and upload your CSV file with contestant data</CardDescription>
+              <CardDescription>Select a competition and upload your CSV file with contestant data</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="event">Select Event</Label>
-                <Select value={selectedEvent} onValueChange={setSelectedEvent}>
+                <Label htmlFor="competition">Select Competition</Label>
+                <Select value={selectedCompetition} onValueChange={setSelectedCompetition}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Choose an event" />
+                    <SelectValue placeholder="Choose a competition" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="event1">Best Undergraduate Project</SelectItem>
-                    <SelectItem value="event2">Innovation Challenge</SelectItem>
-                    <SelectItem value="event3">Research Presentation</SelectItem>
+                    {competitions.map((competition) => (
+                      <SelectItem key={competition.id} value={competition.id}>
+                        {competition.name}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -189,7 +221,7 @@ export default function BulkUploadPage() {
                 </div>
               )}
 
-              <Button onClick={handleUpload} disabled={!file || !selectedEvent || uploading} className="w-full">
+              <Button onClick={handleUpload} disabled={!file || !selectedCompetition || uploading} className="w-full">
                 {uploading ? "Uploading..." : "Upload Contestants"}
               </Button>
             </CardContent>
@@ -263,7 +295,7 @@ export default function BulkUploadPage() {
                 <h4 className="font-medium text-foreground">Data Validation:</h4>
                 <ul className="list-disc list-inside mt-1 space-y-1">
                   <li>Contestant name and email are required</li>
-                  <li>Email addresses must be unique within the event</li>
+                  <li>Email addresses must be unique within the competition</li>
                   <li>Registration numbers should be unique if provided</li>
                 </ul>
               </div>
