@@ -45,6 +45,7 @@ const navItems = {
     { title: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
     { title: "My Events", href: "/judge/events", icon: Calendar },
     { title: "Judging", href: "/judge/judging", icon: UserCheck },
+    { title: "Summarization", href: "/judge/summarization", icon: UserCheck },
     { title: "My Reports", href: "/judge/reports", icon: FileText },
   ],
   contestant: [

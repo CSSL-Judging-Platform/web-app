@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Plus, Search, Filter, MoreHorizontal, Users, Calendar, Trophy, Edit, Trash2 } from "lucide-react"
+import { Plus, Search, Filter, MoreHorizontal, Users, Calendar, Trophy, Edit, Trash2, ListChecks } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -28,6 +28,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { DashboardLayout } from "@/components/layout/sidebar"
+import { SortableList, SortableItem } from "@/components/ui/sortable-list"
 import { useAuth } from "@/lib/auth"
 import { competitionsApi, bigEventsApi } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
@@ -51,6 +52,23 @@ interface BigEvent {
   name: string
 }
 
+interface JudgingCriteria {
+  id: string;
+  name: string;
+  description: string;
+  max_points: number;
+  weight: number;
+  order_index: number;
+  competition_id: string;
+}
+
+interface CriteriaFormData {
+  name: string;
+  description: string;
+  max_points: number;
+  weight: number;
+}
+
 export default function SmallEventsPage() {
   const { user } = useAuth()
   const [competitions, setCompetitions] = useState<Competition[]>([])
@@ -71,6 +89,16 @@ export default function SmallEventsPage() {
   })
   const { toast } = useToast()
   const [updatingStatus, setUpdatingStatus] = useState<Record<string, boolean>>({});
+  const [isCriteriaDialogOpen, setIsCriteriaDialogOpen] = useState(false);
+  const [currentCompetitionId, setCurrentCompetitionId] = useState<string | null>(null);
+  const [criteriaList, setCriteriaList] = useState<JudgingCriteria[]>([]);
+  const [currentCriteria, setCurrentCriteria] = useState<JudgingCriteria | null>(null);
+  const [criteriaFormData, setCriteriaFormData] = useState<CriteriaFormData>({
+    name: '',
+    description: '',
+    max_points: 100,
+    weight: 1.0
+  });
 
   useEffect(() => {
     loadData()
@@ -93,6 +121,137 @@ export default function SmallEventsPage() {
       setLoading(false)
     }
   }
+
+  const openCriteriaDialog = async (competitionId: string) => {
+    setCurrentCompetitionId(competitionId);
+    try {
+      const criteria = await competitionsApi.getById(competitionId);
+      setCriteriaList(criteria.judging_criteria || []);
+      setIsCriteriaDialogOpen(true);
+    } catch (error) {
+      console.error("Error loading criteria:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load judging criteria.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleCreateCriteria = async () => {
+    if (!currentCompetitionId) return;
+
+    try {
+      const newCriteria = await competitionsApi.createCriteria({
+        ...criteriaFormData,
+        competition_id: currentCompetitionId,
+        order_index: criteriaList.length + 1
+      });
+      
+      setCriteriaList([...criteriaList, newCriteria]);
+      resetCriteriaForm();
+      toast({
+        title: "Success",
+        description: "Criteria created successfully.",
+      });
+    } catch (error) {
+      console.error("Error creating criteria:", error);
+      toast({
+        title: "Error",
+        description: "Failed to create criteria.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleUpdateCriteria = async () => {
+    if (!currentCriteria) return;
+
+    try {
+      const updatedCriteria = await competitionsApi.updateCriteria(currentCriteria.id, criteriaFormData);
+      
+      setCriteriaList(criteriaList.map(c => 
+        c.id === updatedCriteria.id ? updatedCriteria : c
+      ));
+      setCurrentCriteria(null);
+      resetCriteriaForm();
+      toast({
+        title: "Success",
+        description: "Criteria updated successfully.",
+      });
+    } catch (error) {
+      console.error("Error updating criteria:", error);
+      toast({
+        title: "Error",
+        description: "Failed to update criteria.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleDeleteCriteria = async (criteriaId: string) => {
+    if (confirm("Are you sure you want to delete this criteria?")) {
+      try {
+        await competitionsApi.deleteCriteria(criteriaId);
+        setCriteriaList(criteriaList.filter(c => c.id !== criteriaId));
+        toast({
+          title: "Success",
+          description: "Criteria deleted successfully.",
+        });
+      } catch (error) {
+        console.error("Error deleting criteria:", error);
+        toast({
+          title: "Error",
+          description: "Failed to delete criteria.",
+          variant: "destructive",
+        });
+      }
+    }
+  };
+
+  const resetCriteriaForm = () => {
+    setCriteriaFormData({
+      name: '',
+      description: '',
+      max_points: 100,
+      weight: 1.0
+    });
+  };
+
+  const openEditCriteria = (criteria: JudgingCriteria) => {
+    setCurrentCriteria(criteria);
+    setCriteriaFormData({
+      name: criteria.name,
+      description: criteria.description,
+      max_points: criteria.max_points,
+      weight: criteria.weight
+    });
+  };
+
+  const handleReorderCriteria = async (newOrder: JudgingCriteria[]) => {
+    try {
+      await competitionsApi.reorderCriteria(
+        currentCompetitionId!,
+        newOrder.map((item, index) => ({
+          id: item.id,
+          name: item.name,
+          description: item.description,
+          max_points: item.max_points,
+          weight: item.weight,
+          competition_id: currentCompetitionId, // Add this line
+          order_index: index + 1
+        }))
+      );
+      setCriteriaList(newOrder);
+    } catch (error) {
+      console.error("Error reordering criteria:", error);
+      toast({
+        title: "Error",
+        description: "Failed to reorder criteria.",
+        variant: "destructive",
+      });
+    }
+  };
 
   const filteredCompetitions = competitions.filter((competition) => {
     const matchesSearch =
@@ -523,6 +682,10 @@ export default function SmallEventsPage() {
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                          <DropdownMenuItem onClick={() => openCriteriaDialog(competition.id)}>
+                            <ListChecks className="mr-2 h-4 w-4" />
+                            Manage Criteria
+                          </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => openEditDialog(competition)}>
                             <Edit className="mr-2 h-4 w-4" />
                             Edit
@@ -629,6 +792,150 @@ export default function SmallEventsPage() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* Criteria Management Dialog */}
+        <Dialog open={isCriteriaDialogOpen} onOpenChange={setIsCriteriaDialogOpen}>
+          <DialogContent className="sm:max-w-[600px] h-[80vh] flex flex-col">
+            <DialogHeader>
+              <DialogTitle>Judging Criteria</DialogTitle>
+              <DialogDescription>
+                Manage the judging criteria for this competition. Drag to reorder.
+              </DialogDescription>
+            </DialogHeader>
+            
+            <div className="flex-1 overflow-y-auto px-2">
+              {/* Criteria List */}
+              <div className="border rounded-lg">
+                <div className="bg-gray-50 px-4 py-2 border-b">
+                  <h3 className="font-medium">Current Criteria</h3>
+                </div>
+                <div className="divide-y">
+                  {criteriaList.length === 0 ? (
+                    <div className="p-4 text-center text-sm text-muted-foreground">
+                      No criteria defined yet
+                    </div>
+                  ) : (
+                    <SortableList
+                      items={criteriaList}
+                      onSort={handleReorderCriteria}
+                      renderItem={(criteria) => (
+                        <SortableItem id={criteria.id}>
+                          <div className="flex items-center justify-between p-4">
+                            <div>
+                              <div className="font-medium">{criteria.name}</div>
+                              <div className="text-sm text-muted-foreground">
+                                Max points: {criteria.max_points} • Weight: {criteria.weight}
+                              </div>
+                            </div>
+                            <div className="flex gap-2">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => openEditCriteria(criteria)}
+                              >
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDeleteCriteria(criteria.id)}
+                              >
+                                <Trash2 className="h-4 w-4 text-red-600" />
+                              </Button>
+                            </div>
+                          </div>
+                        </SortableItem>
+                      )}
+                    />
+                  )}
+                </div>
+              </div>
+
+              {/* Add/Edit Form */}
+              <div className="space-y-4 mt-4">
+                <h3 className="font-medium">
+                  {currentCriteria ? "Edit Criteria" : "Add New Criteria"}
+                </h3>
+                <div className="grid gap-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="criteria-name">Name</Label>
+                    <Input
+                      id="criteria-name"
+                      value={criteriaFormData.name}
+                      onChange={(e) => setCriteriaFormData({
+                        ...criteriaFormData,
+                        name: e.target.value
+                      })}
+                      placeholder="Enter criteria name"
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="criteria-description">Description</Label>
+                    <Textarea
+                      id="criteria-description"
+                      value={criteriaFormData.description}
+                      onChange={(e) => setCriteriaFormData({
+                        ...criteriaFormData,
+                        description: e.target.value
+                      })}
+                      placeholder="Enter criteria description"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="grid gap-2">
+                      <Label htmlFor="criteria-max-points">Max Points</Label>
+                      <Input
+                        id="criteria-max-points"
+                        type="number"
+                        min="1"
+                        max="1000"
+                        value={criteriaFormData.max_points}
+                        onChange={(e) => setCriteriaFormData({
+                          ...criteriaFormData,
+                          max_points: Number(e.target.value)
+                        })}
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="criteria-weight">Weight</Label>
+                      <Input
+                        id="criteria-weight"
+                        type="number"
+                        step="0.1"
+                        min="0.1"
+                        max="10"
+                        value={criteriaFormData.weight}
+                        onChange={(e) => setCriteriaFormData({
+                          ...criteriaFormData,
+                          weight: Number(e.target.value)
+                        })}
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2">
+                  {currentCriteria && (
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setCurrentCriteria(null);
+                        resetCriteriaForm();
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  )}
+                  <Button
+                    onClick={currentCriteria ? handleUpdateCriteria : handleCreateCriteria}
+                  >
+                    {currentCriteria ? "Update Criteria" : "Add Criteria"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
       </div>
     </DashboardLayout>
   )

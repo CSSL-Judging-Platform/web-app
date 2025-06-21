@@ -125,6 +125,50 @@ export const competitionsApi = {
 
     if (error) throw error;
     return data || [];
+  },
+
+  async createCriteria(criteria: any) {
+    const { data, error } = await supabase
+      .from('judging_criteria')
+      .insert(criteria)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  },
+
+  async updateCriteria(id: string, criteria: any) {
+    const { data, error } = await supabase
+      .from('judging_criteria')
+      .update(criteria)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  },
+
+  async deleteCriteria(id: string) {
+    const { error } = await supabase
+      .from('judging_criteria')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+  },
+
+  async reorderCriteria(competitionId: string, updates: Array<{id: string, name:string, description:string, 
+    max_points:number, weight:number, competition_id: string, order_index: number}>) {
+
+    const { data, error } = await supabase
+      .from('judging_criteria')
+      .upsert(updates)
+      .select();
+
+    if (error) throw error;
+    return data;
   }
   
 }
@@ -276,27 +320,27 @@ export const judgesApi = {
   },
 
   async assignToCompetition(judgeId: string, competitionId: string, assignedByProfileId: string) {
-  const { data, error } = await supabase
-    .from("judge_assignments")
-    .insert({
-      judge_id: judgeId,
-      competition_id: competitionId,
-      assigned_by: assignedByProfileId
-    })
-    .select(`
-      *,
-      competition:competitions(
-        id,
-        name,
-        status,
-        big_event:big_events(name)
-      )
-    `)
-    .single();
+    const { data, error } = await supabase
+      .from("judge_assignments")
+      .insert({
+        judge_id: judgeId,
+        competition_id: competitionId,
+        assigned_by: assignedByProfileId
+      })
+      .select(`
+        *,
+        competition:competitions(
+          id,
+          name,
+          status,
+          big_event:big_events(name)
+        )
+      `)
+      .single();
 
-  if (error) throw error;
-  return data;
-},
+    if (error) throw error;
+    return data;
+  },
 
   async removeAssignment(assignmentId: string) {
     const { error } = await supabase
@@ -305,7 +349,457 @@ export const judgesApi = {
       .eq("id", assignmentId);
 
     if (error) throw error;
+  }, 
+
+  async getJudgeAssignments(judgeId: string) {
+    if (!judgeId) return [];
+
+    const { data: judge, error: judgeError } = await supabase
+      .from("judges")
+      .select("id")
+      .eq("profile_id", judgeId)
+      .single();
+    
+    const { data, error } = await supabase
+      .from('judge_assignments')
+      .select(`
+        id,
+        competition_id,
+        competitions:competition_id (
+          id,
+          name,
+          description,
+          start_date,
+          end_date,
+          status
+        )
+      `)
+      .eq('judge_id', judge.id);
+
+    if (error) {
+      console.error('Error fetching judge assignments:', error);
+      throw error;
+    }
+
+    return data.map(assignment => assignment.competitions) || [];
+  },
+
+  // Get contestants for a competition
+  async getContestants(competitionId: string) {
+    if (!competitionId) return [];
+    
+    const { data, error } = await supabase
+      .from('contestants')
+      .select(`
+        id,
+        contestant_name,
+        contestant_email,
+        registration_number,
+        additional_info,
+        registered_at
+      `)
+      .eq('competition_id', competitionId)
+      .order('contestant_name', { ascending: true });
+
+    if (error) {
+      console.error('Error fetching contestants:', error);
+      throw error;
+    }
+
+    return data || [];
+  },
+
+  // Get judging criteria for a competition
+  async getJudgingCriteria(competitionId: string) {
+    if (!competitionId) return [];
+    
+    const { data, error } = await supabase
+      .from('judging_criteria')
+      .select(`
+        id,
+        name,
+        description,
+        max_points,
+        weight,
+        order_index
+      `)
+      .eq('competition_id', competitionId)
+      .order('order_index', { ascending: true });
+
+    if (error) {
+      console.error('Error fetching judging criteria:', error);
+      throw error;
+    }
+
+    return data || [];
+  },
+
+  // Get existing scores for a contestant
+  async getScores(judgeId: string, contestantId: string) {
+    if (!judgeId || !contestantId) return [];
+    
+    const { data, error } = await supabase
+      .from('scores')
+      .select(`
+        id,
+        criteria_id,
+        score,
+        feedback,
+        is_draft
+      `)
+      .eq('judge_id', judgeId)
+      .eq('contestant_id', contestantId);
+
+    if (error) {
+      console.error('Error fetching scores:', error);
+      throw error;
+    }
+
+    return data || [];
+  },
+
+  async getScoresForJudge(judgeId: string) {
+    if (!judgeId) return [];
+    
+    const { data, error } = await supabase
+      .from('scores')
+      .select(`
+        id,
+        criteria_id,
+        score,
+        feedback,
+        is_draft
+      `)
+      .eq('judge_id', judgeId);
+
+    if (error) {
+      console.error('Error fetching scores:', error);
+      throw error;
+    }
+
+    return data || [];
+  },
+
+  // Save scores (create or update)
+  async saveScores(params: {
+    judgeId: string;
+    contestantId: string;
+    scores: {
+      criteria_id: string;
+      score: number;
+      feedback: string;
+    }[];
+    isDraft: boolean;
+  }) {
+    const { judgeId, contestantId, scores, isDraft } = params;
+
+    const { data: judge, error: judgeError } = await supabase
+      .from("judges")
+      .select("id")
+      .eq("profile_id", judgeId)
+      .single();
+
+    // First delete any existing scores for this judge/contestant combination
+    const { error: deleteError } = await supabase
+      .from('scores')
+      .delete()
+      .eq('judge_id', judge.id)
+      .eq('contestant_id', contestantId);
+
+    if (deleteError) {
+      console.error('Error deleting existing scores:', deleteError);
+      throw deleteError;
+    }
+
+    // Insert new scores
+    const scoreRecords = scores.map(score => ({
+      judge_id: judge.id,
+      contestant_id: contestantId,
+      criteria_id: score.criteria_id,
+      score: score.score,
+      feedback: score.feedback,
+      is_draft: isDraft,
+    }));
+
+    const { data, error } = await supabase
+      .from('scores')
+      .insert(scoreRecords)
+      .select();
+
+    if (error) {
+      console.error('Error saving scores:', error);
+      throw error;
+    }
+
+    return data;
+  },
+
+  // Log activity when scores are saved/submitted
+  async logJudgingActivity(params: {
+    judgeId: string;
+    contestantId: string;
+    actionType: 'save_draft' | 'submit_scores';
+  }) {
+    const contestant = await supabase
+      .from('contestants')
+      .select('contestant_name')
+      .eq('id', params.contestantId)
+      .single();
+
+    if (contestant.error) {
+      console.error('Error fetching contestant:', contestant.error);
+      return;
+    }
+
+    await supabase.from('activities').insert({
+      user_id: params.judgeId,
+      action_type: params.actionType,
+      entity_type: 'contestant',
+      entity_id: params.contestantId,
+      description: params.actionType === 'save_draft' 
+        ? `Saved draft scores for ${contestant.data.contestant_name}`
+        : `Submitted final scores for ${contestant.data.contestant_name}`,
+    });
+  },
+
+  async getFinalScores(contestantId: string) {
+    if (!contestantId) return [];
+    
+    const { data, error } = await supabase
+      .from('scores')
+      .select(`
+        id,
+        criteria_id,
+        score,
+        feedback,
+        judging_criteria:criteria_id(name, max_points, weight)
+      `)
+      .eq('contestant_id', contestantId)
+      .eq('is_draft', false);
+
+    if (error) {
+      console.error('Error fetching final scores:', error);
+      throw error;
+    }
+
+    return data || [];
+  },
+
+  async getContestantRankings(competitionId: string) {
+    if (!competitionId) return [];
+    
+    const { data, error } = await supabase.rpc('get_contestant_rankings', {
+      competition_id: competitionId
+    });
+
+    if (error) {
+      console.error('Error fetching contestant rankings:', error);
+      // Fallback to manual calculation
+      return this.calculateContestantRankings(competitionId);
+    }
+
+    return data || [];
+  },
+
+  async calculateContestantRankings(competitionId: string) {
+    const { data: contestants, error: contestantError } = await supabase
+      .from('contestants')
+      .select('id, contestant_name')
+      .eq('competition_id', competitionId);
+
+    if (contestantError) throw contestantError;
+
+    const { data: scores, error: scoresError } = await supabase
+      .from('scores')
+      .select('contestant_id, score')
+      .eq('competition_id', competitionId)
+      .eq('is_draft', false);
+
+    if (scoresError) throw scoresError;
+
+    const results = contestants.map(contestant => {
+      const contestantScores = scores.filter(s => s.contestant_id === contestant.id);
+      const totalScore = contestantScores.reduce((sum, s) => sum + (s.score || 0), 0);
+      const scoreCount = contestantScores.length;
+      const averageScore = scoreCount > 0 ? totalScore / scoreCount : 0;
+
+      return {
+        contestant_id: contestant.id,
+        contestant_name: contestant.contestant_name,
+        total_score: totalScore,
+        average_score: averageScore,
+        score_count: scoreCount
+      };
+    });
+
+    // Sort by average score descending
+    return results.sort((a, b) => b.average_score - a.average_score);
+  },
+
+  // Updated getContestantScoresForCompetition
+  async getContestantScoresForCompetition(judgeId: string, competitionId: string): Promise<ContestantScore[]> {
+    // First get the judge record from profile ID
+    const { data: judge, error: judgeError } = await supabase
+      .from('judges')
+      .select('id')
+      .eq('profile_id', judgeId)
+      .single()
+
+    if (judgeError) throw judgeError
+
+    // Get all contestants for the competition
+    const { data: contestants, error: contestantsError } = await supabase
+      .from('contestants')
+      .select('id, contestant_name, registration_number')
+      .eq('competition_id', competitionId)
+
+    if (contestantsError) throw contestantsError
+
+    // Get judging criteria count for max possible score
+    const { data: criteria, error: criteriaError } = await supabase
+      .from('judging_criteria')
+      .select('id, max_points')
+      .eq('competition_id', competitionId)
+
+    if (criteriaError) throw criteriaError
+
+    const maxPossible = criteria.reduce((sum, criterion) => sum + criterion.max_points, 0)
+
+    // Get all scores for contestants in this competition
+    // We need to join with contestants to filter by competition
+    const { data: allScores, error: scoresError } = await supabase
+      .from('scores')
+      .select(`
+        judge_id, 
+        contestant_id,
+        criteria_id, 
+        score, 
+        is_draft,
+        contestants:contestant_id(competition_id)
+      `)
+      .in('contestant_id', contestants.map(c => c.id))
+
+    if (scoresError) throw scoresError
+
+    // Filter scores to only include those for this competition
+    // (though our contestant filter should already ensure this)
+    const competitionScores = allScores.filter(score => 
+      score.contestants?.competition_id === competitionId
+    )
+
+    // Process data to calculate judge scores and averages
+    const result = contestants.map(contestant => {
+      // Get this judge's scores for the contestant
+      const judgeScores = competitionScores.filter(
+        score => score.judge_id === judge.id && score.contestant_id === contestant.id && !score.is_draft
+      )
+      const judgeScore = judgeScores.reduce((sum, score) => sum + score.score, 0)
+      const isSubmitted = judgeScores.length > 0
+
+      // Get all judges' scores for the contestant to calculate average
+      const allJudgesScores = competitionScores.filter(
+        score => score.contestant_id === contestant.id && !score.is_draft
+      )
+      
+      // Group by criteria and calculate average per criteria
+      const scoresByCriteria: Record<string, { sum: number, count: number }> = {}
+      allJudgesScores.forEach(score => {
+        if (!scoresByCriteria[score.criteria_id]) {
+          scoresByCriteria[score.criteria_id] = { sum: 0, count: 0 }
+        }
+        scoresByCriteria[score.criteria_id].sum += score.score
+        scoresByCriteria[score.criteria_id].count++
+      })
+
+      // Calculate average score
+      let averageScore = 0
+      Object.values(scoresByCriteria).forEach(({ sum, count }) => {
+        averageScore += sum / count
+      })
+
+      return {
+        id: contestant.id,
+        contestant_name: contestant.contestant_name,
+        registration_number: contestant.registration_number,
+        judge_score: judgeScore,
+        average_score: averageScore,
+        max_possible: maxPossible,
+        criteria_count: criteria.length,
+        is_submitted: isSubmitted
+      }
+    })
+
+    return result
+  },
+
+  // Updated getContestantCriteriaScores
+  async getContestantCriteriaScores(judgeId: string, competitionId: string, contestantId: string): Promise<CriteriaScore[]> {
+    // First get the judge record from profile ID
+    const { data: judge, error: judgeError } = await supabase
+      .from('judges')
+      .select('id')
+      .eq('profile_id', judgeId)
+      .single()
+
+    if (judgeError) throw judgeError
+
+    // Verify the contestant belongs to the competition
+    const { data: contestant, error: contestantError } = await supabase
+      .from('contestants')
+      .select('competition_id')
+      .eq('id', contestantId)
+      .single()
+
+    if (contestantError) throw contestantError
+    if (contestant.competition_id !== competitionId) {
+      throw new Error("Contestant not in specified competition")
+    }
+
+    // Get all criteria for the competition
+    const { data: criteria, error: criteriaError } = await supabase
+      .from('judging_criteria')
+      .select('id, name, max_points')
+      .eq('competition_id', competitionId)
+
+    if (criteriaError) throw criteriaError
+
+    // Get all scores for this contestant (no need to filter by competition since we verified contestant)
+    const { data: allScores, error: scoresError } = await supabase
+      .from('scores')
+      .select('judge_id, criteria_id, score')
+      .eq('contestant_id', contestantId)
+      .eq('is_draft', false)
+
+    if (scoresError) throw scoresError
+
+    // Process data to calculate judge scores and averages per criteria
+    const result = criteria.map(criterion => {
+      // Get this judge's score for the criteria
+      const judgeScore = allScores.find(
+        score => score.judge_id === judge.id && score.criteria_id === criterion.id
+      )?.score || 0
+
+      // Get all judges' scores for this criteria to calculate average
+      const criteriaScores = allScores.filter(
+        score => score.criteria_id === criterion.id
+      )
+      
+      const averageScore = criteriaScores.length > 0 
+        ? criteriaScores.reduce((sum, score) => sum + score.score, 0) / criteriaScores.length
+        : 0
+
+      return {
+        criteria_id: criterion.id,
+        criteria_name: criterion.name,
+        max_points: criterion.max_points,
+        judge_score: judgeScore,
+        average_score: averageScore
+      }
+    })
+
+    return result
   }
+
 }
 
 // Contestants API
@@ -518,45 +1012,115 @@ export const dashboardApi = {
     return await analyticsApi.getOverview()
   },
 
-  // New method for judge-specific stats
   async getJudgeStats(judgeId: string) {
-    const { data: assignments } = await supabase
-      .from('judge_assignments')
-      .select('competition_id')
-      .eq('judge_id', judgeId);
+    if (!judgeId) {
+      return {
+        assignedEvents: 0,
+        judgingProgress: 0,
+        pendingReviews: 0
+      };
+    }
 
-    const { data: scores } = await supabase
-      .from('scores')
-      .select('*')
-      .eq('judge_id', judgeId);
+    try {
+      // First get the judge record from profile ID
+      const { data: judge, error: judgeError } = await supabase
+        .from("judges")
+        .select("id")
+        .eq("profile_id", judgeId)
+        .single();
 
-    const completedEvaluations = scores?.length || 0;
-    const assignedEvents = assignments?.length || 0;
-    
-    return {
-      assignedEvents,
-      judgingProgress: assignedEvents > 0 
-        ? Math.round((completedEvaluations / assignedEvents) * 100)
-        : 0,
-      pendingReviews: assignedEvents - completedEvaluations
-    };
+      if (judgeError) throw judgeError;
+
+      // Get judge's assigned competitions with criteria count
+      const { data: assignments, error: assignmentsError } = await supabase
+        .from('judge_assignments')
+        .select(`
+          competition_id,
+          competitions:competition_id (
+            id,
+            judging_criteria:judging_criteria(count),
+            contestants:contestants(count)
+          )
+        `)
+        .eq('judge_id', judge.id);
+
+      if (assignmentsError) throw assignmentsError;
+
+      // Get all scores for this judge
+      const { data: scores, error: scoresError } = await supabase
+        .from('scores')
+        .select('contestant_id, criteria_id')
+        .eq('judge_id', judge.id);
+
+      if (scoresError) throw scoresError;
+
+      // Calculate total possible evaluations
+      let totalPossibleEvaluations = 0;
+      const evaluationsPerCompetition: Record<string, number> = {};
+
+      assignments?.forEach(assignment => {
+        const criteriaCount = assignment.competitions?.judging_criteria?.[0]?.count || 0;
+        const contestantCount = assignment.competitions?.contestants?.[0]?.count || 0;
+        const evaluationsForCompetition = criteriaCount * contestantCount;
+        totalPossibleEvaluations += evaluationsForCompetition;
+        evaluationsPerCompetition[assignment.competition_id] = evaluationsForCompetition;
+      });
+
+      // Calculate completed evaluations
+      const completedEvaluations = scores?.length || 0;
+      const assignedEvents = assignments?.length || 0;
+
+      // Calculate pending reviews
+      let pendingReviews = 0;
+      if (assignments) {
+        pendingReviews = totalPossibleEvaluations - completedEvaluations;
+      }
+
+      return {
+        assignedEvents,
+        judgingProgress: totalPossibleEvaluations > 0 
+          ? Math.round((completedEvaluations / totalPossibleEvaluations) * 100)
+          : 0,
+        pendingReviews: Math.max(0, pendingReviews)
+      };
+    } catch (error) {
+      console.error("Error in getJudgeStats:", error);
+      throw error;
+    }
   },
 
-  // New method for contestant-specific stats
   async getContestantStats(contestantId: string) {
-    const { data: registrations } = await supabase
+    if (!contestantId) {
+      return {
+        registeredEvents: 0,
+        judgingStatus: "Pending",
+        averageScore: "0"
+      };
+    }
+
+    const { data: registrations, error: regError } = await supabase
       .from('contestants')
       .select('competition_id')
       .eq('id', contestantId);
 
-    const { data: scores } = await supabase
+    if (regError) {
+      console.error("Error fetching contestant registrations:", regError);
+      throw regError;
+    }
+
+    const { data: scores, error: scoresError } = await supabase
       .from('scores')
       .select('score')
       .eq('contestant_id', contestantId);
 
+    if (scoresError) {
+      console.error("Error fetching contestant scores:", scoresError);
+      throw scoresError;
+    }
+
     const averageScore = scores?.length 
       ? (scores.reduce((sum, s) => sum + (s.score || 0), 0) / scores.length).toFixed(1)
-      : 0;
+      : "0";
 
     return {
       registeredEvents: registrations?.length || 0,
@@ -565,13 +1129,17 @@ export const dashboardApi = {
     };
   },
 
-  // New method for recent activity (admin only)
   async getRecentActivity() {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('activities')
       .select('*')
       .order('created_at', { ascending: false })
       .limit(3);
+
+    if (error) {
+      console.error("Error fetching recent activity:", error);
+      throw error;
+    }
 
     return data || [];
   }
