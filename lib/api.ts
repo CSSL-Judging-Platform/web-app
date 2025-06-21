@@ -1144,3 +1144,138 @@ export const dashboardApi = {
     return data || [];
   }
 };
+
+export const adminApi = {
+  // ... existing functions
+  
+  async getCompetitionResults(competitionId: string): Promise<{
+    judges: JudgeResult[],
+    contestants: ContestantResult[],
+    max_possible: number
+  }> {
+    // Get all judges assigned to this competition
+    const { data: judgeAssignments, error: assignmentsError } = await supabase
+      .from('judge_assignments')
+      .select(`
+        judge_id,
+        judges:judge_id (
+          id,
+          profiles:profile_id (full_name)
+        )
+      `)
+      .eq('competition_id', competitionId)
+
+    if (assignmentsError) throw assignmentsError
+
+    // Get all contestants for this competition
+    const { data: contestants, error: contestantsError } = await supabase
+      .from('contestants')
+      .select('id, contestant_name, registration_number')
+      .eq('competition_id', competitionId)
+
+    if (contestantsError) throw contestantsError
+
+    // Get all criteria for max possible score calculation
+    const { data: criteria, error: criteriaError } = await supabase
+      .from('judging_criteria')
+      .select('id, max_points')
+      .eq('competition_id', competitionId)
+
+    if (criteriaError) throw criteriaError
+
+    const maxPossible = criteria.reduce((sum, criterion) => sum + criterion.max_points, 0)
+
+    // Get all scores for this competition
+    const { data: allScores, error: scoresError } = await supabase
+      .from('scores')
+      .select(`
+        judge_id,
+        contestant_id,
+        criteria_id,
+        score,
+        is_draft,
+        judging_criteria:criteria_id (max_points)
+      `)
+      .eq('is_draft', false)
+
+    if (scoresError) throw scoresError
+
+    // Process judge results
+    const judgeResults: JudgeResult[] = judgeAssignments.map(assignment => {
+      const judgeId = assignment.judge_id
+      const judgeName = assignment.judges?.profiles?.full_name || `Judge ${judgeId.slice(0, 6)}`
+      
+      // Get this judge's scores
+      const judgeScores = allScores.filter(score => score.judge_id === judgeId)
+      
+      // Calculate scores per contestant
+      const scoresByContestant: Record<string, {
+        score: number
+        criteria_count: number
+        max_possible: number
+      }> = {}
+
+      judgeScores.forEach(score => {
+        if (!scoresByContestant[score.contestant_id]) {
+          scoresByContestant[score.contestant_id] = {
+            score: 0,
+            criteria_count: 0,
+            max_possible: 0
+          }
+        }
+        scoresByContestant[score.contestant_id].score += score.score
+        scoresByContestant[score.contestant_id].criteria_count += 1
+        scoresByContestant[score.contestant_id].max_possible += score.judging_criteria?.max_points || 0
+      })
+
+      // Calculate average score for this judge
+      const validScores = Object.values(scoresByContestant).filter(s => s.criteria_count > 0)
+      const averageScore = validScores.length > 0 
+        ? validScores.reduce((sum, s) => sum + s.score, 0) / validScores.length
+        : 0
+
+      return {
+        judge_id: judgeId,
+        judge_name: judgeName,
+        scores: scoresByContestant,
+        average_score: averageScore
+      }
+    })
+
+    // Process contestant results
+    const contestantResults: ContestantResult[] = contestants.map(contestant => {
+      // Get all scores for this contestant
+      const contestantScores = allScores.filter(score => score.contestant_id === contestant.id)
+      
+      // Group by judge to calculate average
+      const scoresByJudge: Record<string, number[]> = {}
+      contestantScores.forEach(score => {
+        if (!scoresByJudge[score.judge_id]) {
+          scoresByJudge[score.judge_id] = []
+        }
+        scoresByJudge[score.judge_id].push(score.score)
+      })
+
+      // Calculate average score
+      const judgeAverages = Object.values(scoresByJudge).map(scores => 
+        scores.reduce((sum, score) => sum + score, 0) / scores.length
+      )
+      const averageScore = judgeAverages.length > 0 
+        ? judgeAverages.reduce((sum, avg) => sum + avg, 0) / judgeAverages.length
+        : 0
+
+      return {
+        id: contestant.id,
+        name: contestant.contestant_name,
+        registration_number: contestant.registration_number,
+        average_score: averageScore
+      }
+    })
+
+    return {
+      judges: judgeResults,
+      contestants: contestantResults,
+      max_possible: maxPossible
+    }
+  }
+}
