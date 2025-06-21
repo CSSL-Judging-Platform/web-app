@@ -130,78 +130,124 @@ export default function ResultsPage() {
     judge.judge_name.toLowerCase().includes(searchTerm.toLowerCase())
   )
 
-  const handleExportExcel = () => {
-    if (!selectedCompetition) return
+  // Update your export handlers in the component
+    const handleExportExcel = () => {
+        if (!selectedCompetition) return
 
-    const competition = competitions.find(c => c.id === selectedCompetition)
-    const fileName = `${competition?.name || 'Competition'} Results`
+        const competition = competitions.find(c => c.id === selectedCompetition)
+        const fileName = `${competition?.name || 'Competition'} Results`
 
-    // Transpose the matrix - judges as rows, contestants as columns
-    const data = judgeResults.map(judge => {
-        const row: any = {
-        'Judge Name': judge.judge_name,
-        'Average Score': judge.average_score.toFixed(2),
-        'Signature': '' // Empty column for signature
-        }
+        // Sort contestants by average score (descending) for ranking
+        const sortedContestants = [...contestantResults].sort((a, b) => b.average_score - a.average_score)
 
-        contestantResults.forEach(contestant => {
-        row[`${contestant.name} (${contestant.registration_number})`] = 
-            judge.scores[contestant.id]?.score || 'N/A'
+        // Prepare data - contestants as rows, judges as columns
+        const data = sortedContestants.map((contestant, index) => {
+            const row: any = {
+            'Rank': index + 1,
+            'Contestant': contestant.name,
+            'Average Score': contestant.average_score.toFixed(2),
+            'Percentage': `${((contestant.average_score / maxPossibleScore) * 100).toFixed(2)}%`
+            }
+
+            // Add judge scores
+            judgeResults.forEach(judge => {
+            row[`Judge ${judge.judge_name}`] = judge.scores[contestant.id]?.score || 'N/A'
+            })
+
+            return row
         })
 
-        return row
-    })
+        // Add signature row
+        data.push({
+            'Contestant': 'Signatures',
+            ...Object.fromEntries(judgeResults.map(judge => [`Judge ${judge.judge_name}`, ''])),
+            'Average Score': '',
+            'Percentage': ''
+        });
 
-    exportToExcel(data, fileName, true)
-    toast({
-        title: "Export Successful",
-        description: "Competition results exported to Excel",
-    })
-    }
+        exportToExcel(data, fileName)
+        toast({
+            title: "Export Successful",
+            description: "Competition results exported to Excel",
+        })
+        }
 
-    const handleExportPDF = () => {
-    if (!selectedCompetition) return
+        const handleExportPDF = () => {
+        if (!selectedCompetition) return
 
-    const competition = competitions.find(c => c.id === selectedCompetition)
-    const fileName = `${competition?.name || 'Competition'} Results`
+        const competition = competitions.find(c => c.id === selectedCompetition)
+        const fileName = `${competition?.name || 'Competition'} Results`
 
-    // Prepare headers
-    const headers = [
-        'Judge Name',
-        ...contestantResults.map(c => `${c.name} (${c.registration_number})`),
-        'Average Score',
-        'Signature'
-    ]
+        // Sort contestants by average score (descending) for ranking
+        const sortedContestants = [...contestantResults].sort((a, b) => b.average_score - a.average_score)
 
-    // Prepare data
-    const data = judgeResults.map(judge => {
-        return [
-        judge.judge_name,
-        ...contestantResults.map(contestant => 
-            judge.scores[contestant.id]?.score || 'N/A'
-        ),
-        judge.average_score.toFixed(2),
-        '' // Empty cell for signature
+        // Prepare headers
+        const headers = [
+            'Rank',
+            'Contestant',
+            ...judgeResults.map(j => `Judge ${j.judge_name}`),
+            'Average Score',
+            'Percentage'
         ]
-    })
 
-    exportToPDF({
-        title: `${competition?.name} Judging Results`,
-        headers,
-        data,
-        fileName,
-        additionalInfo: [
-        { label: 'Max Possible Score', value: maxPossibleScore },
-        { label: 'Judges Count', value: judgeResults.length },
-        { label: 'Contestants Count', value: contestantResults.length }
-        ],
-        includeSignature: true
-    })
+        // Prepare data
+        const data = sortedContestants.map((contestant, index) => [
+            index + 1,
+            contestant.name,
+            ...judgeResults.map(judge => judge.scores[contestant.id]?.score || 'N/A'),
+            contestant.average_score.toFixed(2),
+            `${((contestant.average_score / maxPossibleScore) * 100).toFixed(2)}%`
+        ])
 
-    toast({
-        title: "Export Successful",
-        description: "Competition results exported to PDF",
-    })
+        // Add signature row
+        data.push([
+            '',
+            'Signatures',
+            ...Array(judgeResults.length).fill(''),
+            '',
+            ''
+        ])
+
+        exportToPDF({
+            title: `${competition?.name} Judging Results`,
+            headers,
+            data,
+            fileName,
+            additionalInfo: [
+            { label: 'Max Possible Score', value: maxPossibleScore },
+            { label: 'Judges Count', value: judgeResults.length },
+            { label: 'Contestants Count', value: contestantResults.length }
+            ],
+            styles: {
+            header: {
+                fillColor: [44, 62, 80], // Dark blue header
+                textColor: 255,
+                fontSize: 10,
+                fontStyle: 'bold'
+            },
+            body: {
+                textColor: [51, 51, 51],
+                fontSize: 9
+            },
+            alternateRow: {
+                fillColor: [245, 245, 245]
+            },
+            rankColumn: {
+                fillColor: [44, 62, 80],
+                textColor: 255,
+                fontStyle: 'bold'
+            },
+            averageColumn: {
+                fillColor: [241, 196, 15], // Yellow highlight for averages
+                textColor: [51, 51, 51]
+            }
+            }
+        })
+
+        toast({
+            title: "Export Successful",
+            description: "Competition results exported to PDF",
+        })
     }
 
   if (loading) {

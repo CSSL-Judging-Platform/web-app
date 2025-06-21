@@ -18,68 +18,148 @@ export const exportToExcel = (data: any[], fileName: string, includeSignature = 
   XLSX.writeFile(workbook, `${fileName}.xlsx`)
 }
 
+interface PDFStyles {
+  header?: {
+    fillColor?: [number, number, number]
+    textColor?: number | [number, number, number]
+    fontSize?: number
+    fontStyle?: 'normal' | 'bold' | 'italic' | 'bolditalic'
+  }
+  body?: {
+    textColor?: number | [number, number, number]
+    fontSize?: number
+  }
+  alternateRow?: {
+    fillColor?: [number, number, number]
+  }
+  rankColumn?: {
+    fillColor?: [number, number, number]
+    textColor?: number | [number, number, number]
+    fontStyle?: 'normal' | 'bold' | 'italic' | 'bolditalic'
+  }
+  averageColumn?: {
+    fillColor?: [number, number, number]
+    textColor?: number | [number, number, number]
+  }
+}
+
+interface PDFExportOptions {
+  title: string
+  headers: string[]
+  data: any[][]
+  fileName: string
+  additionalInfo?: { label: string; value: string | number }[]
+  styles?: PDFStyles
+}
+
 export const exportToPDF = (options: PDFExportOptions) => {
-  const doc = new jsPDF('l') // Landscape orientation for better fit
+  const doc = new jsPDF('l') // Landscape orientation
   
-  // Add title
-  doc.setFontSize(18)
+  // Set document properties
+  doc.setProperties({
+    title: options.title,
+    subject: 'Competition Results',
+    author: 'Judging System',
+    creator: 'Judging System'
+  })
+
+  // Add title and logo
+  doc.setFontSize(20)
+  doc.setTextColor(44, 62, 80) // Dark blue
+  doc.setFont('helvetica', 'bold')
   doc.text(options.title, 14, 22)
   
   // Add date
   doc.setFontSize(10)
+  doc.setTextColor(100)
+  doc.setFont('helvetica', 'normal')
   doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 30)
   
   // Add additional info if provided
   if (options.additionalInfo) {
     let yPos = 40
-    doc.setFontSize(12)
+    doc.setFontSize(11)
     options.additionalInfo.forEach(info => {
-      doc.text(`${info.label}: ${info.value}`, 14, yPos)
+      doc.setTextColor(44, 62, 80)
+      doc.text(`${info.label}:`, 14, yPos)
+      doc.setTextColor(100)
+      doc.text(`${info.value}`, 14 + doc.getTextWidth(`${info.label}: `) + 2, yPos)
       yPos += 7
     })
     yPos += 10
   }
 
-  // Calculate column widths
-  const colWidths = new Array(options.headers.length).fill('auto')
-  if (options.includeSignature) {
-    colWidths[colWidths.length - 1] = 30 // Fixed width for signature column
+  // Prepare table data with styles
+  const tableData = {
+    head: [options.headers],
+    body: options.data,
+    styles: {
+      overflow: 'linebreak',
+      valign: 'middle',
+      halign: 'center'
+    },
+    headStyles: {
+      fillColor: options.styles?.header?.fillColor || [44, 62, 80],
+      textColor: options.styles?.header?.textColor || 255,
+      fontSize: options.styles?.header?.fontSize || 10,
+      fontStyle: options.styles?.header?.fontStyle || 'bold',
+      valign: 'middle'
+    },
+    bodyStyles: {
+      textColor: options.styles?.body?.textColor || [51, 51, 51],
+      fontSize: options.styles?.body?.fontSize || 9,
+      valign: 'middle'
+    },
+    alternateRowStyles: {
+      fillColor: options.styles?.alternateRow?.fillColor || [245, 245, 245]
+    },
+    columnStyles: {
+      0: { // Rank column
+        fillColor: options.styles?.rankColumn?.fillColor || [44, 62, 80],
+        textColor: options.styles?.rankColumn?.textColor || 255,
+        fontStyle: options.styles?.rankColumn?.fontStyle || 'bold',
+        halign: 'center'
+      },
+      [options.headers.length - 2]: { // Average column
+        fillColor: options.styles?.averageColumn?.fillColor || [241, 196, 15],
+        textColor: options.styles?.averageColumn?.textColor || [51, 51, 51],
+        fontStyle: 'bold',
+        halign: 'center'
+      },
+      [options.headers.length - 1]: { // Percentage column
+        halign: 'center'
+      }
+    }
   }
 
   // Add table
   autoTable(doc, {
-    head: [options.headers],
-    body: options.data,
+    ...tableData,
     startY: options.additionalInfo ? 60 : 40,
+    margin: { horizontal: 10 },
     theme: 'grid',
-    headStyles: {
-      fillColor: [41, 128, 185],
-      textColor: 255,
-      fontSize: 8 // Smaller font for headers
-    },
-    bodyStyles: {
-      fontSize: 8 // Smaller font for body
-    },
-    columnStyles: {
-      0: { cellWidth: 30 }, // Judge name column
-      [options.headers.length - 2]: { cellWidth: 20 }, // Average score column
-      [options.headers.length - 1]: { cellWidth: 30 } // Signature column
-    },
-    margin: { horizontal: 5 }, // Smaller margins
-    tableWidth: 'wrap', // Allow table to use full width
-    // Add signature space if needed
-    didDrawCell: (data) => {
-      if (options.includeSignature && data.column.index === data.table.columns.length - 1) {
-        doc.setDrawColor(200, 200, 200)
-        doc.line(
-          data.cell.x + 5,
-          data.cell.y + data.cell.height - 5,
-          data.cell.x + data.cell.width - 5,
-          data.cell.y + data.cell.height - 5
-        )
+    didParseCell: (data) => {
+      // Style signature row
+      if (data.row.index === options.data.length - 1) {
+        data.cell.styles.fontStyle = 'bold'
+        data.cell.styles.textColor = [44, 62, 80]
       }
     }
   })
+
+  // Add footer
+  const pageCount = doc.getNumberOfPages()
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i)
+    doc.setFontSize(10)
+    doc.setTextColor(100)
+    doc.text(
+      `Page ${i} of ${pageCount}`,
+      doc.internal.pageSize.width - 20,
+      doc.internal.pageSize.height - 10,
+      { align: 'right' }
+    )
+  }
 
   doc.save(`${options.fileName}.pdf`)
 }
