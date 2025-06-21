@@ -5,27 +5,84 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { DashboardLayout } from "@/components/layout/sidebar"
-import { getCurrentUser } from "@/lib/auth"
-import { mockData } from "@/lib/mock-data"
+import { useAuth } from "@/lib/auth"
+import { analyticsApi } from "@/lib/api"
 import { TrendingUp, Users, Trophy, Target, Clock } from "lucide-react"
+import { useToast } from "@/hooks/use-toast"
+
+interface AnalyticsData {
+  overview: {
+    totalCompetitions: number
+    activeCompetitions: number
+    totalJudges: number
+    totalContestants: number
+    averageScore: number
+  }
+  competitionStats: Array<{
+    competition_id: string
+    name: string
+    participants: number
+    judges: number
+    completion_rate: number
+  }>
+  judgePerformance: Array<{
+    judge_id: string
+    name: string
+    assigned_competitions: number
+    completed_evaluations: number
+    consistency_score: number
+    average_time_per_evaluation: number
+  }>
+  monthlyTrends: Array<{
+    month: string
+    competitions: number
+    participants: number
+  }>
+}
 
 export default function AnalyticsPage() {
-  const [user, setUser] = useState<any>(null)
+  const { user } = useAuth()
   const [loading, setLoading] = useState(true)
-  const [analytics, setAnalytics] = useState(mockData.analytics)
+  const [analytics, setAnalytics] = useState<AnalyticsData>({
+    overview: {
+      totalCompetitions: 0,
+      activeCompetitions: 0,
+      totalJudges: 0,
+      totalContestants: 0,
+      averageScore: 0,
+    },
+    competitionStats: [],
+    judgePerformance: [],
+    monthlyTrends: [],
+  })
+  const { toast } = useToast()
 
   useEffect(() => {
-    loadData()
+    loadAnalytics()
   }, [])
 
-  const loadData = async () => {
+  const loadAnalytics = async () => {
     try {
-      const currentUser = await getCurrentUser()
-      setUser(currentUser)
-      // In real app, load analytics from API
-      setAnalytics(mockData.analytics)
+      const [overview, competitionStats, judgePerformance, monthlyTrends] = await Promise.all([
+        analyticsApi.getOverview(),
+        analyticsApi.getCompetitionStats(),
+        analyticsApi.getJudgePerformance(),
+        analyticsApi.getMonthlyTrends(),
+      ])
+
+      setAnalytics({
+        overview,
+        competitionStats,
+        judgePerformance,
+        monthlyTrends,
+      })
     } catch (error) {
       console.error("Error loading analytics:", error)
+      toast({
+        title: "Error",
+        description: "Failed to load analytics data.",
+        variant: "destructive",
+      })
     } finally {
       setLoading(false)
     }
@@ -50,7 +107,7 @@ export default function AnalyticsPage() {
         </div>
 
         {/* Overview Stats */}
-        <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-5">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">Total Competitions</CardTitle>
@@ -58,7 +115,7 @@ export default function AnalyticsPage() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-primary">{analytics.overview.totalCompetitions}</div>
-              <p className="text-xs text-muted-foreground">+2 from last month</p>
+              <p className="text-xs text-muted-foreground">{analytics.overview.activeCompetitions} active</p>
             </CardContent>
           </Card>
 
@@ -69,7 +126,7 @@ export default function AnalyticsPage() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-primary">{analytics.overview.totalJudges}</div>
-              <p className="text-xs text-muted-foreground">100% participation rate</p>
+              <p className="text-xs text-muted-foreground">Registered judges</p>
             </CardContent>
           </Card>
 
@@ -80,7 +137,7 @@ export default function AnalyticsPage() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-primary">{analytics.overview.totalContestants}</div>
-              <p className="text-xs text-muted-foreground">+12 new registrations</p>
+              <p className="text-xs text-muted-foreground">Participants</p>
             </CardContent>
           </Card>
 
@@ -91,7 +148,26 @@ export default function AnalyticsPage() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-primary">{analytics.overview.averageScore}%</div>
-              <p className="text-xs text-muted-foreground">+2.3% from last period</p>
+              <p className="text-xs text-muted-foreground">Across all competitions</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Completion Rate</CardTitle>
+              <Target className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-primary">
+                {analytics.competitionStats.length > 0
+                  ? Math.round(
+                      analytics.competitionStats.reduce((sum, c) => sum + c.completion_rate, 0) /
+                        analytics.competitionStats.length,
+                    )
+                  : 0}
+                %
+              </div>
+              <p className="text-xs text-muted-foreground">Average completion</p>
             </CardContent>
           </Card>
         </div>
@@ -110,7 +186,7 @@ export default function AnalyticsPage() {
                     <div className="space-y-1">
                       <p className="text-sm font-medium leading-none">{competition.name}</p>
                       <p className="text-xs text-muted-foreground">
-                        {competition.participants} participants • {competition.completed} completed
+                        {competition.participants} participants • {competition.judges} judges
                       </p>
                     </div>
                     <div className="text-right">
@@ -122,6 +198,9 @@ export default function AnalyticsPage() {
                   <Progress value={competition.completion_rate} className="h-2" />
                 </div>
               ))}
+              {analytics.competitionStats.length === 0 && (
+                <p className="text-sm text-muted-foreground">No competition data available</p>
+              )}
             </CardContent>
           </Card>
 
@@ -154,6 +233,9 @@ export default function AnalyticsPage() {
                   </div>
                 </div>
               ))}
+              {analytics.judgePerformance.length === 0 && (
+                <p className="text-sm text-muted-foreground">No judge performance data available</p>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -166,7 +248,7 @@ export default function AnalyticsPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {analytics.monthlyTrends.map((month, index) => (
+              {analytics.monthlyTrends.map((month) => (
                 <div key={month.month} className="flex items-center space-x-4">
                   <div className="w-12 text-sm font-medium">{month.month}</div>
                   <div className="flex-1 space-y-2">
@@ -197,9 +279,22 @@ export default function AnalyticsPage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
-                <p className="text-2xl font-bold text-primary">Best Undergraduate Project</p>
-                <p className="text-sm text-muted-foreground">100% completion rate</p>
-                <p className="text-sm text-muted-foreground">Average score: 84.9%</p>
+                {analytics.competitionStats.length > 0 ? (
+                  <>
+                    <p className="text-2xl font-bold text-primary">
+                      {
+                        analytics.competitionStats.reduce((prev, current) =>
+                          prev.completion_rate > current.completion_rate ? prev : current,
+                        ).name
+                      }
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {Math.max(...analytics.competitionStats.map((c) => c.completion_rate))}% completion rate
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No data available</p>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -210,9 +305,23 @@ export default function AnalyticsPage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
-                <p className="text-2xl font-bold text-primary">Dr. Sarah Johnson</p>
-                <p className="text-sm text-muted-foreground">25 evaluations completed</p>
-                <p className="text-sm text-muted-foreground">92% consistency score</p>
+                {analytics.judgePerformance.length > 0 ? (
+                  <>
+                    <p className="text-2xl font-bold text-primary">
+                      {
+                        analytics.judgePerformance.reduce((prev, current) =>
+                          prev.completed_evaluations > current.completed_evaluations ? prev : current,
+                        ).name
+                      }
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {Math.max(...analytics.judgePerformance.map((j) => j.completed_evaluations))} evaluations
+                      completed
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No data available</p>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -223,9 +332,13 @@ export default function AnalyticsPage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
-                <p className="text-2xl font-bold text-green-600">+180%</p>
-                <p className="text-sm text-muted-foreground">From last quarter</p>
-                <p className="text-sm text-muted-foreground">42 total participants</p>
+                <p className="text-2xl font-bold text-green-600">
+                  {analytics.overview.totalContestants > 0 ? "+100%" : "0%"}
+                </p>
+                <p className="text-sm text-muted-foreground">Growth this period</p>
+                <p className="text-sm text-muted-foreground">
+                  {analytics.overview.totalContestants} total participants
+                </p>
               </div>
             </CardContent>
           </Card>

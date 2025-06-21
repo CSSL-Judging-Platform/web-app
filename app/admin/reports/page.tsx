@@ -66,54 +66,68 @@ export default function ReportsPage() {
   }
 
   const loadEventReports = async () => {
-    const { data: eventsData, error } = await supabase.from("small_events").select(`
-        id,
-        name,
-        status,
-        contestants!inner(id),
-        judge_assignments!inner(id),
-        judge_submissions(id, is_final)
-      `)
+      // Get all competitions with their contestant and judge counts
+      const { data: eventsData, error: eventsError } = await supabase
+        .from("competitions")
+        .select(`
+          id,
+          name,
+          status,
+          contestants:contestants(count),
+          judge_assignments:judge_assignments(count),
+          judge_submissions!inner(id, is_final)
+        `);
 
-    if (error) {
-      console.error("Error loading events:", error)
-      return
-    }
+      if (eventsError) {
+        console.error("Error loading events:", eventsError);
+        return;
+      }
 
-    const reports: EventReport[] = await Promise.all(
-      eventsData.map(async (event: any) => {
-        // Get average scores for this event
-        const { data: scoresData } = await supabase
-          .from("scores")
-          .select("score")
-          .in(
-            "contestant_id",
-            event.contestants.map((c: any) => c.id),
-          )
-          .eq("is_draft", false)
+      // Get all scores for calculating averages
+      const { data: scoresData, error: scoresError } = await supabase
+        .from("scores")
+        .select("contestant_id, score, is_draft")
+        .eq("is_draft", false);
 
-        const totalScore = scoresData?.reduce((sum, score) => sum + Number(score.score), 0) || 0
-        const averageScore = scoresData?.length ? totalScore / scoresData.length : 0
+      if (scoresError) {
+        console.error("Error loading scores:", scoresError);
+        return;
+      }
+
+      // Process the data
+      const reports: EventReport[] = eventsData.map((event) => {
+        // Get scores for this event's contestants
+        const eventScores = scoresData.filter(score => 
+          event.contestants.some((c: any) => c.id === score.contestant_id)
+        );
+
+        const totalScore = eventScores.reduce(
+          (sum, score) => sum + Number(score.score),
+          0
+        );
+        const averageScore = eventScores.length
+          ? totalScore / eventScores.length
+          : 0;
 
         return {
           id: event.id,
           name: event.name,
           status: event.status,
-          total_contestants: event.contestants.length,
-          total_judges: event.judge_assignments.length,
+          total_contestants: event.contestants[0]?.count || 0,
+          total_judges: event.judge_assignments[0]?.count || 0,
           completed_submissions: event.judge_submissions.filter((s: any) => s.is_final).length,
           average_score: Math.round(averageScore * 100) / 100,
-        }
-      }),
-    )
+        };
+      });
 
-    setEvents(reports)
-  }
+      setEvents(reports);
+    };
 
-  const loadContestantScores = async () => {
-    if (!selectedEvent) return
+    const loadContestantScores = async () => {
+    if (!selectedEvent) return;
 
-    const { data: contestantsData, error } = await supabase
+    // Get contestants for this small_event
+    const { data: contestantsData, error: contestantsError } = await supabase
       .from("contestants")
       .select(`
         id,
@@ -121,18 +135,24 @@ export default function ReportsPage() {
         contestant_email,
         scores!inner(score, is_draft)
       `)
-      .eq("small_event_id", selectedEvent)
+      .eq("competition_id", selectedEvent);
 
-    if (error) {
-      console.error("Error loading contestant scores:", error)
-      return
+    if (contestantsError) {
+      console.error("Error loading contestants:", contestantsError);
+      return;
     }
 
+    // Process the scores
     const scores: ContestantScore[] = contestantsData
-      .map((contestant: any) => {
-        const finalScores = contestant.scores.filter((s: any) => !s.is_draft)
-        const totalScore = finalScores.reduce((sum: number, score: any) => sum + Number(score.score), 0)
-        const averageScore = finalScores.length ? totalScore / finalScores.length : 0
+      .map((contestant) => {
+        const finalScores = contestant.scores.filter((s: any) => !s.is_draft);
+        const totalScore = finalScores.reduce(
+          (sum: number, score: any) => sum + Number(score.score),
+          0
+        );
+        const averageScore = finalScores.length
+          ? totalScore / finalScores.length
+          : 0;
 
         return {
           contestant_name: contestant.contestant_name,
@@ -141,16 +161,16 @@ export default function ReportsPage() {
           average_score: Math.round(averageScore * 100) / 100,
           judge_count: finalScores.length,
           rank: 0, // Will be set after sorting
-        }
+        };
       })
       .sort((a, b) => b.average_score - a.average_score)
       .map((contestant, index) => ({
         ...contestant,
         rank: index + 1,
-      }))
+      }));
 
-    setContestantScores(scores)
-  }
+    setContestantScores(scores);
+};
 
   const exportToCSV = (data: any[], filename: string) => {
     if (data.length === 0) return

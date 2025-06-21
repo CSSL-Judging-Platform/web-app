@@ -2,12 +2,12 @@ import { Heart } from "lucide-react"
 
 export function Footer() {
   return (
-    <footer className="border-t bg-background">
+    <footer className="bg-background">
       <div className="container mx-auto px-4 py-6">
         <div className="flex flex-col items-center justify-between space-y-4 md:flex-row md:space-y-0">
           <div className="flex flex-col items-center space-y-2 md:flex-row md:space-y-0 md:space-x-4">
             <p className="text-sm text-muted-foreground">
-              © 2024 Computer Society of Sri Lanka (CSSL). All rights reserved.
+              © 2025 Computer Society of Sri Lanka (CSSL). All rights reserved.
             </p>
           </div>
           <div className="flex items-center space-x-4 text-sm text-muted-foreground">
@@ -26,12 +26,12 @@ export function Footer() {
             <Heart className="h-4 w-4 text-red-500 fill-current" />
             <span>by</span>
             <a
-              href="https://codeidol.lk"
+              href="https://veloce.com"
               target="_blank"
               rel="noopener noreferrer"
               className="font-medium text-primary hover:underline transition-colors"
             >
-              Code Idol
+              VELOCE
             </a>
           </div>
         </div>

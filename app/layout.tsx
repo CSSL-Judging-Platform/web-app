@@ -4,6 +4,8 @@ import { Inter } from "next/font/google"
 import "./globals.css"
 import { ThemeProvider } from "@/components/ui/theme-provider"
 import { Toaster } from "@/components/ui/toaster"
+import { AuthProvider } from '@/lib/auth'
+import { Toaster as SonnerToaster } from "sonner"
 
 const inter = Inter({ subsets: ["latin"] })
 
@@ -12,7 +14,6 @@ export const metadata: Metadata = {
   description: "Computer Society of Sri Lanka - Competition Judging Platform",
   keywords: "CSSL, judging, competition, Sri Lanka, computer society",
   authors: [{ name: "Code Idol", url: "https://codeidol.lk" }],
-    generator: 'v0.dev'
 }
 
 export default function RootLayout({
@@ -22,9 +23,18 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={inter.className}>
-        <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false} disableTransitionOnChange={false}>
-          {children}
+      <body className={inter.className} suppressHydrationWarning>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="light"
+          enableSystem={false}
+          disableTransitionOnChange={false}
+          suppressHydrationWarning
+        >
+          <AuthProvider>
+            {children}
+            <SonnerToaster position="top-center" />
+          </AuthProvider>
           <Toaster />
         </ThemeProvider>
       </body>

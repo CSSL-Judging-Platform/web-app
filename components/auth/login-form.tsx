@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { LoginLogo } from "@/components/ui/login-logo"
-import { signIn } from "@/lib/auth"
+import { useAuth } from "@/lib/auth"
 import { Eye, EyeOff, User, Lock } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
@@ -22,6 +22,8 @@ export default function LoginForm() {
   const [error, setError] = useState("")
   const router = useRouter()
   const { toast } = useToast()
+
+  const { signIn } = useAuth()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()

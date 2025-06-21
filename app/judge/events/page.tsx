@@ -11,6 +11,8 @@ import { getCurrentUser } from "@/lib/auth"
 import { mockData } from "@/lib/mock-data"
 import { useRouter } from "next/navigation"
 import { useToast } from "@/hooks/use-toast"
+import { judgesApi } from "@/lib/api"
+import { supabase } from "@/lib/supabase"
 
 interface JudgeEvent {
   id: string
@@ -42,31 +44,51 @@ export default function JudgeEventsPage() {
       const currentUser = await getCurrentUser()
       setUser(currentUser)
 
+      if (!currentUser?.id) {
+        throw new Error("User not authenticated")
+      }
+
+      const { data: judge, error: judgeError } = await supabase
+        .from('judges')
+        .select('id')
+        .eq('profile_id', currentUser.id)
+        .single();
+
       // Get judge's assigned competitions
-      const judgeAssignments = mockData.judgeAssignments.filter((assignment) => assignment.judge_id === currentUser?.id)
+      const assignedCompetitions = await judgesApi.getAssignments(judge.id)
 
-      const assignedCompetitions = judgeAssignments.map((assignment) => {
-        const competition = mockData.competitions.find((c) => c.id === assignment.competition_id)
-        const bigEvent = mockData.bigEvents.find((be) => be.id === competition?.big_event_id)
-        const contestants = mockData.contestants.filter((c) => c.competition_id === competition?.id)
-        const criteria = mockData.judgingCriteria[competition?.id || ""] || []
+      // Transform data to match our interface
+      const formattedEvents = await Promise.all(
+        assignedCompetitions.map(async (assignment: any) => {
+          const competition = assignment.competition
+          const contestants = await judgesApi.getContestants(competition.id)
+          const criteria = await judgesApi.getJudgingCriteria(competition.id)
+          
+          // Get judge's completed submissions
+          const judgeScores = await judgesApi.getScoresForJudge(judge.id)
+          const completedSubmissions = contestants.filter(contestant => 
+            judgeScores.some(score => score.contestant_id === contestant.id && !score.is_draft)
+          ).length
 
-        return {
-          id: competition?.id || "",
-          name: competition?.name || "",
-          description: competition?.description || "",
-          start_date: competition?.start_date || "",
-          end_date: competition?.end_date || "",
-          status: competition?.status as "upcoming" | "active" | "completed",
-          contestants_count: contestants.length,
-          my_progress: Math.floor(Math.random() * 100), // Mock progress
-          total_criteria: criteria.length,
-          completed_submissions: Math.floor(contestants.length * 0.7), // Mock completed
-          big_event_name: bigEvent?.name || "",
-        }
-      })
+          return {
+            id: competition.id,
+            name: competition.name,
+            description: competition.description,
+            start_date: competition.start_date,
+            end_date: competition.end_date,
+            status: getCompetitionStatus(competition.start_date, competition.end_date),
+            contestants_count: contestants.length,
+            my_progress: contestants.length > 0 
+              ? Math.round((completedSubmissions / contestants.length) * 100)
+              : 0,
+            total_criteria: criteria.length,
+            completed_submissions: completedSubmissions,
+            big_event_name: competition.big_event?.name || "N/A"
+          }
+        })
+      )
 
-      setEvents(assignedCompetitions)
+      setEvents(formattedEvents)
     } catch (error) {
       console.error("Error loading events:", error)
       toast({
@@ -77,6 +99,16 @@ export default function JudgeEventsPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const getCompetitionStatus = (startDate: string, endDate: string): "upcoming" | "active" | "completed" => {
+    const now = new Date()
+    const start = new Date(startDate)
+    const end = new Date(endDate)
+
+    if (now < start) return "upcoming"
+    if (now > end) return "completed"
+    return "active"
   }
 
   const handleStartJudging = (eventId: string, eventName: string) => {
@@ -92,7 +124,6 @@ export default function JudgeEventsPage() {
       title: "Viewing Event Details",
       description: `Loading details for ${eventName}`,
     })
-    // For now, redirect to judging page with view mode
     router.push(`/judge/judging?event=${eventId}&mode=view`)
   }
 
