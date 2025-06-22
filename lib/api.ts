@@ -540,6 +540,13 @@ export const judgesApi = {
     contestantId: string;
     actionType: 'save_draft' | 'submit_scores';
   }) {
+
+    const { data: judge, error: judgeError } = await supabase
+      .from('profiles')
+      .select('full_name')
+      .eq('id', params.judgeId)
+      .single()
+
     const contestant = await supabase
       .from('contestants')
       .select('contestant_name')
@@ -557,8 +564,8 @@ export const judgesApi = {
       entity_type: 'contestant',
       entity_id: params.contestantId,
       description: params.actionType === 'save_draft' 
-        ? `Saved draft scores for ${contestant.data.contestant_name}`
-        : `Submitted final scores for ${contestant.data.contestant_name}`,
+        ? `Saved draft scores for ${contestant.data.contestant_name} by ${judge.full_name}`
+        : `Submitted final scores for ${contestant.data.contestant_name} by ${judge.full_name}`,
     });
   },
 
@@ -893,42 +900,49 @@ export const analyticsApi = {
   },
 
   async getJudgePerformance() {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select(`
-        id,
-        full_name,
-        judge_assignments:judge_assignments!judge_assignments_judge_id_fkey(count),
-        scores!scores_judge_id_fkey(
-          score
-        )
-      `)
-      .eq('role', 'judge');
+    try {
+      // First get all judges with their profile info
+      const { data: judges, error: judgesError } = await supabase
+        .from('judges')
+        .select(`
+          id,
+          profiles:profile_id(full_name),
+          judge_assignments(
+            id
+          ),
+          scores(
+            score
+          )
+        `);
 
-    if (error) throw error;
+      if (judgesError) throw judgesError;
 
-    return data?.map(judge => {
-      const scores = judge.scores || [];
-      const scoreValues = scores.map(s => s.score).filter(Boolean);
-      
-      // Calculate consistency
-      let consistency = 100;
-      if (scoreValues.length > 1) {
-        const avgScore = scoreValues.reduce((a, b) => a + b, 0) / scoreValues.length;
-        const squaredDiffs = scoreValues.map(s => Math.pow(s - avgScore, 2));
-        const stdDev = Math.sqrt(squaredDiffs.reduce((a, b) => a + b, 0) / squaredDiffs.length);
-        consistency = Math.max(0, 100 - (stdDev * 10));
-      }
+      return judges?.map(judge => {
+        const scores = judge.scores || [];
+        const scoreValues = scores.map(s => s.score).filter(Boolean);
+        
+        // Calculate consistency
+        let consistency = 100;
+        if (scoreValues.length > 1) {
+          const avgScore = scoreValues.reduce((a, b) => a + b, 0) / scoreValues.length;
+          const squaredDiffs = scoreValues.map(s => Math.pow(s - avgScore, 2));
+          const stdDev = Math.sqrt(squaredDiffs.reduce((a, b) => a + b, 0) / squaredDiffs.length);
+          consistency = Math.max(0, 100 - (stdDev * 10));
+        }
 
-      return {
-        judge_id: judge.id,
-        name: judge.full_name,
-        assigned_competitions: judge.judge_assignments?.[0]?.count || 0,
-        completed_evaluations: scores.length,
-        consistency_score: Math.round(consistency),
-        average_time_per_evaluation: 0 // Default value since time_spent doesn't exist
-      };
-    }) || [];
+        return {
+          judge_id: judge.id,
+          name: judge.profiles?.full_name || `Judge ${judge.id.slice(0, 6)}`,
+          assigned_competitions: judge.judge_assignments?.length || 0,
+          completed_evaluations: scores.length,
+          consistency_score: Math.round(consistency),
+          average_time_per_evaluation: 0 // Default value since time_spent doesn't exist
+        };
+      }) || [];
+    } catch (error) {
+      console.error("Error in getJudgePerformance:", error);
+      throw error;
+    }
   },
 
   async getMonthlyTrends() {
@@ -1133,8 +1147,8 @@ export const dashboardApi = {
     const { data, error } = await supabase
       .from('activities')
       .select('*')
-      .order('created_at', { ascending: false })
-      .limit(3);
+      .order('created_at', { ascending: false });
+      // .limit(10);
 
     if (error) {
       console.error("Error fetching recent activity:", error);
@@ -1146,7 +1160,6 @@ export const dashboardApi = {
 };
 
 export const adminApi = {
-  // ... existing functions
   
   async getCompetitionResults(competitionId: string): Promise<{
     judges: JudgeResult[],
@@ -1242,27 +1255,17 @@ export const adminApi = {
       }
     })
 
-    // Process contestant results
     const contestantResults: ContestantResult[] = contestants.map(contestant => {
       // Get all scores for this contestant
       const contestantScores = allScores.filter(score => score.contestant_id === contestant.id)
       
-      // Group by judge to calculate average
-      const scoresByJudge: Record<string, number[]> = {}
-      contestantScores.forEach(score => {
-        if (!scoresByJudge[score.judge_id]) {
-          scoresByJudge[score.judge_id] = []
-        }
-        scoresByJudge[score.judge_id].push(score.score)
-      })
-
-      // Calculate average score
-      const judgeAverages = Object.values(scoresByJudge).map(scores => 
-        scores.reduce((sum, score) => sum + score, 0) / scores.length
-      )
-      const averageScore = judgeAverages.length > 0 
-        ? judgeAverages.reduce((sum, avg) => sum + avg, 0) / judgeAverages.length
-        : 0
+      // Calculate total score from all judges
+      const totalScore = contestantScores.reduce((sum, score) => sum + score.score, 0)
+      
+      const judgeCount = new Set(contestantScores.map(score => score.judge_id)).size
+      
+      // Calculate actual average score (total / number of judges)
+      const averageScore = judgeCount > 0 ? totalScore / judgeCount : 0
 
       return {
         id: contestant.id,
@@ -1277,5 +1280,73 @@ export const adminApi = {
       contestants: contestantResults,
       max_possible: maxPossible
     }
+  },
+
+  async getCriteriaWiseResults(competitionId: string): Promise<CriteriaWiseResult[]> {
+    // Get all judges assigned to this competition
+    const { data: judgeAssignments, error: assignmentsError } = await supabase
+      .from('judge_assignments')
+      .select(`
+        judge_id,
+        judges:judge_id (
+          id,
+          profiles:profile_id (full_name)
+        )
+      `)
+      .eq('competition_id', competitionId)
+
+    if (assignmentsError) throw assignmentsError
+
+    // Get all criteria for this competition
+    const { data: criteria, error: criteriaError } = await supabase
+      .from('judging_criteria')
+      .select('id, name, max_points')
+      .eq('competition_id', competitionId)
+
+    if (criteriaError) throw criteriaError
+
+    // Get all scores for this competition
+    const { data: allScores, error: scoresError } = await supabase
+      .from('scores')
+      .select(`
+        judge_id,
+        contestant_id,
+        criteria_id,
+        score,
+        is_draft
+      `)
+      .eq('is_draft', false)
+
+    if (scoresError) throw scoresError
+
+    // Process data into criteria-wise structure
+    return judgeAssignments.map(assignment => {
+      const judgeId = assignment.judge_id
+      const judgeName = assignment.judges?.profiles?.full_name || `Judge ${judgeId.slice(0, 6)}`
+
+      // Initialize criteria structure
+      const criteriaData: CriteriaWiseResult['criteria'] = {}
+      criteria.forEach(criterion => {
+        criteriaData[criterion.id] = {
+          name: criterion.name,
+          max_points: criterion.max_points,
+          scores: {}
+        }
+      })
+
+      // Populate with scores
+      const judgeScores = allScores.filter(score => score.judge_id === judgeId)
+      judgeScores.forEach(score => {
+        if (criteriaData[score.criteria_id]) {
+          criteriaData[score.criteria_id].scores[score.contestant_id] = score.score
+        }
+      })
+
+      return {
+        judge_id: judgeId,
+        judge_name: judgeName,
+        criteria: criteriaData
+      }
+    })
   }
 }

@@ -475,8 +475,28 @@ export default function JudgingPage() {
                                   min="0"
                                   max={criterion.max_points}
                                   value={score?.score || 0}
-                                  onChange={(e) => updateScore(criterion.id, Number(e.target.value))}
-                                  className={`w-full ${hasError ? "border-red-500" : ""}`}
+                                  onChange={(e) => {
+                                    if (!isDraft) return; // Prevent changes if not draft
+                                    const value = Number(e.target.value)
+                                    if (value > criterion.max_points) {
+                                      toast({
+                                        title: "Invalid Score",
+                                        description: `Score cannot exceed ${criterion.max_points} points`,
+                                        variant: "destructive",
+                                      })
+                                      return
+                                    }
+                                    updateScore(criterion.id, value)
+                                  }}
+                                  onBlur={(e) => {
+                                    if (!isDraft) return;
+                                    const value = Number(e.target.value)
+                                    if (value > criterion.max_points) {
+                                      updateScore(criterion.id, criterion.max_points)
+                                    }
+                                  }}
+                                  disabled={!isDraft} // Add this line
+                                  className={`w-full ${validationErrors[criterion.id] ? "border-red-500" : ""}`}
                                 />
                               </div>
 
@@ -487,6 +507,7 @@ export default function JudgingPage() {
                                   placeholder="Provide detailed feedback for this criterion..."
                                   value={score?.feedback || ""}
                                   onChange={(e) => updateFeedback(criterion.id, e.target.value)}
+                                  disabled={!isDraft}
                                   rows={4}
                                 />
                               </div>
