@@ -32,14 +32,14 @@ import Image from "next/image"
 const navItems = {
   admin: [
     { title: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+    { title: "Main Events", href: "/admin/big-events", icon: Calendar },
     { title: "Competitions", href: "/admin/small-events", icon: Trophy },
-    { title: "Big Events", href: "/admin/big-events", icon: Calendar },
     { title: "Judges", href: "/admin/judges", icon: Gavel },
     { title: "Evaluations", href: "/admin/evaluations", icon: ClipboardList },
     { title: "Contestants", href: "/admin/contestants", icon: Users },
     { title: "Results", href: "/admin/results", icon: Award },
     { title: "Analytics", href: "/admin/analytics", icon: BarChart3 },
-    { title: "Reports", href: "/admin/reports", icon: FileText },
+    // { title: "Reports", href: "/admin/reports", icon: FileText },
     { title: "Bulk Upload", href: "/admin/bulk-upload", icon: Upload },
   ],
   judge: [

@@ -223,82 +223,90 @@ export default function Summarization() {
             <CardContent>
               <Table>
                 <TableHeader>
-                  <TableRow>
+                    <TableRow>
+                    <TableHead className="w-[60px]">Rank</TableHead>
                     <TableHead 
-                      className="cursor-pointer hover:bg-accent" 
-                      onClick={() => handleSort('contestant_name')}
+                        className="cursor-pointer hover:bg-accent" 
+                        onClick={() => handleSort('contestant_name')}
                     >
-                      <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1">
                         Contestant
                         {getSortIcon('contestant_name')}
-                      </div>
+                        </div>
                     </TableHead>
                     <TableHead>Registration</TableHead>
                     <TableHead 
-                      className="text-right cursor-pointer hover:bg-accent" 
-                      onClick={() => handleSort('judge_score')}
+                        className="text-right cursor-pointer hover:bg-accent" 
+                        onClick={() => handleSort('judge_score')}
                     >
-                      <div className="flex items-center justify-end gap-1">
+                        <div className="flex items-center justify-end gap-1">
                         Your Score
                         {getSortIcon('judge_score')}
-                      </div>
+                        </div>
                     </TableHead>
                     <TableHead 
-                      className="text-right cursor-pointer hover:bg-accent" 
-                      onClick={() => handleSort('average_score')}
+                        className="text-right cursor-pointer hover:bg-accent" 
+                        onClick={() => handleSort('average_score')}
                     >
-                      <div className="flex items-center justify-end gap-1">
+                        <div className="flex items-center justify-end gap-1">
                         Avg. Score
                         {getSortIcon('average_score')}
-                      </div>
+                        </div>
                     </TableHead>
                     <TableHead className="text-right">Progress</TableHead>
                     <TableHead className="text-right">Status</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
+                    </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredContestants.map((contestant) => (
+                    {filteredContestants.map((contestant, index) => (
                     <TableRow key={contestant.id}>
-                      <TableCell className="font-medium">{contestant.contestant_name}</TableCell>
-                      <TableCell>{contestant.registration_number}</TableCell>
-                      <TableCell className="text-right">
+                        <TableCell className="font-medium">
+                        <div className="flex items-center justify-center">
+                            <Badge variant="secondary" className="h-6 w-6 rounded-full p-0 flex items-center justify-center">
+                            {index + 1}
+                            </Badge>
+                        </div>
+                        </TableCell>
+                        <TableCell className="font-medium">{contestant.contestant_name}</TableCell>
+                        <TableCell>{contestant.registration_number}</TableCell>
+                        <TableCell className="text-right">
                         <span className="font-semibold">{contestant.judge_score}</span>
                         <span className="text-muted-foreground">/{contestant.max_possible}</span>
-                      </TableCell>
-                      <TableCell className="text-right">
+                        </TableCell>
+                        <TableCell className="text-right">
                         <span className="font-semibold">{contestant.average_score.toFixed(1)}</span>
                         <span className="text-muted-foreground">/{contestant.max_possible}</span>
-                      </TableCell>
-                      <TableCell className="text-right">
+                        </TableCell>
+                        <TableCell className="text-right">
                         <div className="flex items-center gap-2">
-                          <Progress 
+                            <Progress 
                             value={(contestant.average_score / contestant.max_possible) * 100} 
                             className="h-2 w-full" 
-                          />
-                          <span className="text-xs text-muted-foreground">
+                            />
+                            <span className="text-xs text-muted-foreground">
                             {((contestant.average_score / contestant.max_possible) * 100).toFixed(1)}%
-                          </span>
+                            </span>
                         </div>
-                      </TableCell>
-                      <TableCell className="text-right">
+                        </TableCell>
+                        <TableCell className="text-right">
                         <Badge variant={contestant.is_submitted ? "default" : "outline"}>
-                          {contestant.is_submitted ? "Submitted" : "Pending"}
+                            {contestant.is_submitted ? "Submitted" : "Pending"}
                         </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
+                        </TableCell>
+                        <TableCell className="text-right">
                         <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          onClick={() => viewContestantDetails(contestant)}
+                            variant="ghost" 
+                            size="sm" 
+                            onClick={() => viewContestantDetails(contestant)}
                         >
-                          <Eye className="h-4 w-4" />
+                            <Eye className="h-4 w-4" />
                         </Button>
-                      </TableCell>
+                        </TableCell>
                     </TableRow>
-                  ))}
+                    ))}
                 </TableBody>
-              </Table>
+            </Table>
             </CardContent>
           </Card>
         ) : selectedEvent && contestants.length === 0 ? (

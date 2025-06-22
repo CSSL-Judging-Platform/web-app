@@ -11,7 +11,7 @@ import { getCurrentUser } from "@/lib/auth"
 import { mockData } from "@/lib/mock-data"
 import { useRouter } from "next/navigation"
 import { useToast } from "@/hooks/use-toast"
-import { judgesApi } from "@/lib/api"
+import { judgesApi, dashboardApi } from "@/lib/api"
 import { supabase } from "@/lib/supabase"
 
 interface JudgeEvent {
@@ -54,6 +54,8 @@ export default function JudgeEventsPage() {
         .eq('profile_id', currentUser.id)
         .single();
 
+      if (judgeError) throw judgeError;
+
       // Get judge's assigned competitions
       const assignedCompetitions = await judgesApi.getAssignments(judge.id)
 
@@ -64,11 +66,28 @@ export default function JudgeEventsPage() {
           const contestants = await judgesApi.getContestants(competition.id)
           const criteria = await judgesApi.getJudgingCriteria(competition.id)
           
-          // Get judge's completed submissions
+          // Get judge's scores for this competition
           const judgeScores = await judgesApi.getScoresForJudge(judge.id)
-          const completedSubmissions = contestants.filter(contestant => 
-            judgeScores.some(score => score.contestant_id === contestant.id && !score.is_draft)
-          ).length
+          const competitionScores = judgeScores.filter(score => 
+            contestants.some(c => c.id === score.contestant_id)
+          );
+          
+          // Calculate completed submissions (all criteria scored for a contestant)
+          const completedSubmissions = contestants.filter(contestant => {
+            const contestantScores = competitionScores.filter(s => 
+              s.contestant_id === contestant.id && !s.is_draft
+            )
+            return contestantScores.length >= criteria.length
+          }).length
+
+          // Calculate progress based on criteria completion
+          const totalPossibleEvaluations = contestants.length * criteria.length
+          const completedEvaluations = competitionScores.filter(s => !s.is_draft).length
+          const progress = totalPossibleEvaluations > 0 
+            ? Math.round((completedEvaluations / totalPossibleEvaluations) * 100)
+            : 0
+
+          const stats = await dashboardApi.getJudgeStats(currentUser.id)
 
           return {
             id: competition.id,
@@ -78,9 +97,7 @@ export default function JudgeEventsPage() {
             end_date: competition.end_date,
             status: getCompetitionStatus(competition.start_date, competition.end_date),
             contestants_count: contestants.length,
-            my_progress: contestants.length > 0 
-              ? Math.round((completedSubmissions / contestants.length) * 100)
-              : 0,
+            my_progress: stats.judgingProgress,
             total_criteria: criteria.length,
             completed_submissions: completedSubmissions,
             big_event_name: competition.big_event?.name || "N/A"

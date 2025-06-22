@@ -285,7 +285,7 @@ export default function BigEventsPage() {
       <div className="space-y-6">
         <div className="flex flex-col space-y-4 md:flex-row md:items-center md:justify-between md:space-y-0">
           <div>
-            <h2 className="text-2xl md:text-3xl font-bold tracking-tight">Big Events</h2>
+            <h2 className="text-2xl md:text-3xl font-bold tracking-tight">Main Events</h2>
             <p className="text-muted-foreground">Manage conferences, summits, and major events</p>
           </div>
 
